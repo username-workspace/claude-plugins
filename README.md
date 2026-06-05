@@ -1,13 +1,13 @@
-# Username · Claude Code plugins
+# skills
 
-Open, horizontal, re-usable Claude Code plugins by **Username** ([Studio A.I.](https://username.digital)).
-Public marketplace — company-specific (vertical) skills live in a separate private repo.
+Open, horizontal, re-usable Claude Code skills & plugins by **Username** ([Studio A.I.](https://username.digital)).
+Company-specific (vertical) skills live in a separate private repo.
 
 ## Install
 
 ```text
-/plugin marketplace add username-workspace/claude-plugins
-/plugin install claude-remote-spawn@username-workspace
+/plugin marketplace add username-workspace/skills
+/plugin install claude-remote-spawn@username
 ```
 
 ## Plugins

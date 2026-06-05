@@ -1,10 +1,10 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "username-workspace",
+  "name": "username",
   "owner": { "name": "Username", "email": "admin@username.digital" },
   "metadata": {
-    "description": "Open, horizontal Claude Code plugins by Username (Studio A.I.).",
-    "homepage": "https://github.com/username-workspace/claude-plugins"
+    "description": "Open, horizontal, re-usable Claude Code skills & plugins by Username (Studio A.I.).",
+    "homepage": "https://github.com/username-workspace/skills"
   },
   "plugins": [
     {
