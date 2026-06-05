@@ -1,17 +1,16 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "username",
+  "description": "Open, horizontal, re-usable Claude Code skills & plugins by Username (Studio A.I.).",
   "owner": { "name": "Username", "email": "admin@username.digital" },
-  "metadata": {
-    "description": "Open, horizontal, re-usable Claude Code skills & plugins by Username (Studio A.I.).",
-    "homepage": "https://github.com/username-workspace/skills"
-  },
   "plugins": [
     {
       "name": "claude-remote-spawn",
       "version": "1.0.0",
+      "description": "Spawn persistent, remote-controllable Claude Code sessions on your machine, or run one-shot headless prompts. Terminal-agnostic, cross-platform.",
       "source": "./plugins/claude-remote-spawn",
-      "description": "Spawn persistent, remote-controllable Claude Code sessions on your machine, or run one-shot headless prompts. Terminal-agnostic, cross-platform."
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/claude-remote-spawn"
     }
   ]
 }
