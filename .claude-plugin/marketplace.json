@@ -4,7 +4,7 @@
   "owner": { "name": "Username", "email": "admin@username.digital" },
   "metadata": {
     "description": "Open, horizontal Claude Code plugins by Username (Studio A.I.).",
-    "homepage": "https://github.com/username-workspace/marketplace"
+    "homepage": "https://github.com/username-workspace/claude-plugins"
   },
   "plugins": [
     {

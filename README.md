@@ -6,7 +6,7 @@ Public marketplace — company-specific (vertical) skills live in a separate pri
 ## Install
 
 ```text
-/plugin marketplace add username-workspace/marketplace
+/plugin marketplace add username-workspace/claude-plugins
 /plugin install claude-remote-spawn@username-workspace
 ```
 
