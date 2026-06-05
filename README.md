@@ -15,3 +15,7 @@ Company-specific (vertical) skills live in a separate private repo.
 | Plugin | Description |
 |---|---|
 | [`claude-remote-spawn`](./plugins/claude-remote-spawn) | Spawn persistent, remote-controllable Claude Code sessions on your machine, or run one-shot headless prompts. |
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
