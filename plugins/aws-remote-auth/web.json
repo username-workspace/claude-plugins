@@ -1,0 +1,13 @@
+{
+  "category": "DevOps",
+  "tagline": "Re-authenticate to AWS from anywhere, on demand, with an autofill device code.",
+  "summary": "When an AWS SSO session expires, this surfaces a device-code login you approve from any browser — autofill link included. A PreToolUse hook detects expiry on aws commands and hands you the code instead of a cryptic \"token has expired\" error; the skill also re-auths any profile on demand.",
+  "capabilities": [
+    "Detects expired or missing AWS SSO sessions locally, with no network call",
+    "Starts a device-code login and surfaces the autofill URL + code",
+    "PreToolUse hook turns \"token expired\" into an actionable re-auth prompt",
+    "Generic across profiles and SSO portals — nothing account-specific"
+  ],
+  "commands": ["hook", "login", "status"],
+  "platforms": ["macOS", "Linux"]
+}

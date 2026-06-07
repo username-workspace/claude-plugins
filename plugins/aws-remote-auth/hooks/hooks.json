@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/sso-auth.py hook",
+            "if": "Bash(aws *)",
+            "timeout": 20,
+            "statusMessage": "Checking AWS SSO session…"
+          }
+        ]
+      }
+    ]
+  }
+}

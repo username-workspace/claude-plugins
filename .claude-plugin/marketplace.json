@@ -2,7 +2,10 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "username",
   "description": "Open, horizontal, re-usable Claude Code skills & plugins by Username (Studio A.I.).",
-  "owner": { "name": "Username", "email": "admin@username.digital" },
+  "owner": {
+    "name": "Username",
+    "email": "admin@username.digital"
+  },
   "plugins": [
     {
       "name": "claude-remote-spawn",
@@ -11,6 +14,14 @@
       "source": "./plugins/claude-remote-spawn",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/claude-remote-spawn"
+    },
+    {
+      "name": "aws-remote-auth",
+      "version": "1.0.0",
+      "source": "./plugins/aws-remote-auth",
+      "description": "On-demand AWS SSO re-authentication via device code (autofill link), with a PreToolUse hook that auto-detects expired sessions on aws commands. Generic across profiles and SSO portals.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/aws-remote-auth"
     }
   ]
 }
