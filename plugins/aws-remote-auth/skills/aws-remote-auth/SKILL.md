@@ -47,7 +47,11 @@ prompt; after approval, re-run the command.
 ## Notes
 
 - Expiry is read from `~/.aws/sso/cache` (no network). Profile is resolved from `--profile`, else
-  `$AWS_PROFILE`, else `default`; the SSO portal comes from `~/.aws/config`.
+  `$AWS_PROFILE`, else `default`. SSO config is read from **both** `~/.aws/config` and
+  `~/.aws/credentials` (or `AWS_CONFIG_FILE` / `AWS_SHARED_CREDENTIALS_FILE`), across every layout:
+  profiles declared in either file, legacy `sso_start_url` keys, the `sso_session` token-provider
+  format, and assume-role chains via `source_profile` (the source profile owning the SSO is the one
+  logged in).
 - A pending login is reused (not relaunched) if you retry before approving.
 - Requires AWS CLI v2 (`aws sso login --use-device-code`). Covers `aws` commands; for `terraform`
   or SDK calls, run `login` on demand first.
