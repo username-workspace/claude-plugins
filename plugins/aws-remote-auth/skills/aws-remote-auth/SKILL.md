@@ -21,8 +21,12 @@ automatically, so the model never sees a raw "token expired" error.
 Re-auth a profile (default: `$AWS_PROFILE`, else `default`):
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sso-auth.py" login [profile]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sso-auth.py" login [profile] [--wait]
 ```
+
+`--wait` prints the autofill URL + code, then **polls until the session becomes valid** and exits 0
+on success. Run it **detached / in the background** so approval is detected automatically — no manual
+"it's done" signal needed; the caller is notified when the command exits.
 
 Check a session without re-authenticating:
 

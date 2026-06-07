@@ -149,7 +149,7 @@ def cmd_hook():
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
 
 
-def cmd_login(profile):
+def cmd_login(profile, wait=False, timeout=600):
     start_url = start_url_for(profile)
     if start_url is None:
         print(f"❌ profile '{profile}' has no SSO config (sso_start_url / sso_session) in {AWS_DIR}", file=sys.stderr)
@@ -159,11 +159,22 @@ def cmd_login(profile):
         return
     url, code = start_device_login(profile, start_url)
     if url:
-        print(f"🔐 AWS SSO login for '{profile}' — approve in any browser:\n  {url}\n  code: {code}")
-        print("Once approved, re-run your command.")
+        print(f"🔐 AWS SSO login for '{profile}' — approve in any browser:\n  {url}\n  code: {code}", flush=True)
     else:
         print(f"Started device login for '{profile}', but could not capture the code. "
-              f"Run manually: aws sso login --profile {profile} --use-device-code")
+              f"Run manually: aws sso login --profile {profile} --use-device-code", flush=True)
+    if not wait:
+        print("Once approved, re-run your command.")
+        return
+    print(f"⏳ waiting for approval (up to {timeout // 60} min)…", flush=True)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if is_valid(start_url):
+            print(f"✅ '{profile}' authenticated.")
+            return
+        time.sleep(3)
+    print(f"⏳ timed out waiting for '{profile}' approval", file=sys.stderr)
+    sys.exit(1)
 
 
 def cmd_status(profile):
@@ -185,11 +196,13 @@ def main():
     if sub == "hook":
         cmd_hook()
     elif sub == "login":
-        cmd_login(sys.argv[2] if len(sys.argv) > 2 else resolve_profile())
+        rest = sys.argv[2:]
+        prof = next((a for a in rest if not a.startswith("-")), None) or resolve_profile()
+        cmd_login(prof, wait="--wait" in rest)
     elif sub == "status":
         cmd_status(sys.argv[2] if len(sys.argv) > 2 else resolve_profile())
     else:
-        print("usage: sso-auth.py <hook|login|status> [profile]", file=sys.stderr)
+        print("usage: sso-auth.py <hook|login [--wait]|status> [profile]", file=sys.stderr)
         sys.exit(2)
 
 
