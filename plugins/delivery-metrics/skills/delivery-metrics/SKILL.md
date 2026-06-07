@@ -4,7 +4,7 @@ description: >-
   Generate a developer productivity + quality report from git history — for a single repo or a
   workspace of submodules. Produces an interactive HTML dashboard tracking tickets delivered,
   velocity (tickets / available workday), fix-ratio, reverts, WIP vs delivered, utilization, and
-  per-repo specialization, with monthly time series. Repo-agnostic and configurable (ticket
+  per-repo specialization, with weekly time series (the in-progress week is excluded). Repo-agnostic and configurable (ticket
   pattern, holidays, leaves, author aliases). Use when asked about developer productivity, team
   velocity, delivery metrics, engineering throughput, or performance-review data. Optional period:
   1m, 3m (default), 6m, 12m, 24m.
@@ -17,20 +17,22 @@ Tracks **delivered output adjusted for availability** plus **quality signals**, 
 
 ## Workflow
 
-### 1. Parse period
-From the request/argument: no arg → **3 months** (default; single-month trends aren't meaningful);
-`1m` (charts fall back to bars), `3m`, `6m`, `12m`, `24m`. Compute `SINCE` (first day of start
-month), `UNTIL` (first day of current month + 1), `MONTHS` count.
+### 1. Parse period (how far back)
+From the request/argument: no arg → **3 months** (default); `1m`, `3m`, `6m`, `12m`, `24m`. Compute
+`SINCE` (first day of the start month) and `UNTIL` (first day of next month). Buckets are **weekly
+(Monday-based)**; the script **excludes the in-progress week** via the machine clock — on Mon–Fri the
+running week is dropped, on Sat/Sun the finished work week is kept. Pass the label as `<PERIOD>`.
 
 ### 2. Collect data
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/delivery-metrics/scripts/collect-metrics.py" <ROOT> <SINCE> <UNTIL> <MONTHS> [config.json] > /tmp/delivery-metrics-data.json
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/delivery-metrics/scripts/collect-metrics.py" <ROOT> <SINCE> <UNTIL> <PERIOD> [config.json] > /tmp/delivery-metrics-data.json
 ```
 `<ROOT>` is the repo or workspace root. Config is optional (also auto-loaded from
 `<ROOT>/.delivery-metrics.json`). The script runs **one `git log --all` per repo**, splits
 *delivered* (on the default branch) from *WIP* (on branches, by SHA and by subject to survive
-rebases/cherry-picks), aggregates per dev + per month, and computes available workdays from the
-calendar minus configured holidays and leaves. No network, no external services.
+rebases/cherry-picks), aggregates per dev + per **week**, clamps the window to the last complete week,
+and computes available workdays from the calendar minus configured holidays and leaves. No network,
+no external services.
 
 ### 3. Build HTML
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/delivery-metrics/assets/report-template.html`
@@ -41,7 +43,7 @@ calendar minus configured holidays and leaves. No network, no external services.
 ### 4. Text summary
 Concise markdown: top KPIs (tickets delivered, mean velocity, best fix-ratio); ranking by velocity
 (tickets / available day, adjusted for leaves); quality flags (fix-ratio > 40%, many reverts,
-WIP > delivered, recurring big commits); per-repo breakdown; month-over-month trend; caveats below.
+WIP > delivered, recurring big commits); per-repo breakdown; week-over-week trend; caveats below.
 
 ## Configuration (optional — all fields have defaults)
 
@@ -54,11 +56,19 @@ WIP > delivered, recurring big commits); per-repo breakdown; month-over-month tr
   "author_aliases": { "Jane": "Jane Doe" },
   "exclude": ["CI Bot"],          // hidden from charts (kept in raw developers)
   "holidays": ["2026-01-01"],     // ISO dates removed from working days
-  "leaves": [ { "author": "Jane Doe", "start": "2026-05-01", "end": "2026-05-05", "fraction": 1.0 } ]
+  "leaves": [ { "author": "Jane Doe", "start": "2026-05-01", "end": "2026-05-05", "fraction": 1.0 } ],
+  "availability_command": "python3 hr-availability.py"  // optional provider
 }
 ```
 Without config: auto-detects submodules (or treats `<ROOT>` as one repo), generic ticket pattern,
-no holidays/leaves (available days = weekdays). Set `fraction` to `0.5` for half-day leaves.
+no holidays/leaves (available days = weekdays — the report then hides the leave column). Set
+`fraction` to `0.5` for half-day leaves.
+
+**Availability provider (`availability_command`)** — for live leave/holiday data, point this at any
+command that prints `{"holidays":[...iso...], "leaves":[{"author","start","end","fraction"}...]}` on
+stdout. It runs in `<ROOT>` with `DM_SINCE`/`DM_UNTIL` in the environment, and its output is merged
+into `holidays`/`leaves`. This keeps the skill generic: an org plugs its own HR source (e.g. a
+TimeOff/Workday/calendar fetcher) opaquely, without that integration living in the skill.
 
 ## Key metrics
 
