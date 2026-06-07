@@ -1,0 +1,13 @@
+{
+  "category": "Agents",
+  "tagline": "Spawn a new Claude Code session remotely, on your own machine.",
+  "summary": "Remote Control drives the Claude Code sessions already open on your machine. claude-remote-spawn starts new ones: a persistent, visible session that shows up at once in Remote Control and in \"claude agents\", drivable from your phone.",
+  "capabilities": [
+    "Launches a persistent, visible session (claude --remote-control inside a PTY)",
+    "Shows up in Remote Control and in \"claude agents\", drivable from your phone",
+    "Stays alive until you stop it, unlike a headless run that exits immediately",
+    "Terminal-agnostic, no dependencies"
+  ],
+  "commands": ["spawn", "list", "stop", "check"],
+  "platforms": ["macOS", "Linux"]
+}
