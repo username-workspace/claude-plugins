@@ -22,6 +22,14 @@
       "description": "On-demand AWS SSO re-authentication via device code (autofill link), with a PreToolUse hook that auto-detects expired sessions on aws commands. Generic across profiles and SSO portals.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/aws-remote-auth"
+    },
+    {
+      "name": "delivery-metrics",
+      "version": "1.0.0",
+      "source": "./plugins/delivery-metrics",
+      "description": "Generate a developer productivity & quality report (interactive HTML dashboard) from git history — single repo or submodule workspace. Repo-agnostic and configurable.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/delivery-metrics"
     }
   ]
 }

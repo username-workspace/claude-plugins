@@ -1,0 +1,12 @@
+{
+  "name": "delivery-metrics",
+  "version": "1.0.0",
+  "description": "Generate a developer productivity & quality report (interactive HTML dashboard) from git history — single repo or submodule workspace. Tracks delivered tickets, velocity adjusted for availability, fix-ratio, reverts, WIP, utilization. Repo-agnostic and configurable.",
+  "author": {
+    "name": "Username",
+    "email": "admin@username.digital"
+  },
+  "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/delivery-metrics",
+  "repository": "https://github.com/username-workspace/skills",
+  "license": "MIT"
+}

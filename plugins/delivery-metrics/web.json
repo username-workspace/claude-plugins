@@ -1,0 +1,13 @@
+{
+  "category": "DevOps",
+  "tagline": "Turn git history into a developer productivity & quality dashboard.",
+  "summary": "Analyzes git history for a single repo or a workspace of submodules and renders an interactive HTML dashboard: tickets delivered, velocity adjusted for availability, fix-ratio, reverts, WIP vs delivered, utilization, and per-repo specialization, with monthly trends. Repo-agnostic and configurable — no external services, no network.",
+  "capabilities": [
+    "Splits delivered (default branch) from WIP, surviving rebases and cherry-picks",
+    "Velocity normalized for availability (weekdays minus configurable holidays and leaves)",
+    "Quality signals: fix-ratio, reverts, big commits, lines per commit",
+    "Configurable ticket pattern, repos, aliases — works on any repo, no hardcoding"
+  ],
+  "commands": ["collect-metrics"],
+  "platforms": ["macOS", "Linux"]
+}

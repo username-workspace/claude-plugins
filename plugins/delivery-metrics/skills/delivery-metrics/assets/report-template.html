@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Developer Productivity</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+    --text: #e4e4e7; --text-muted: #8b8d97; --accent: #818cf8;
+    --good: #34d399; --warn: #f59e0b; --bad: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text); padding: 32px; min-height: 100vh; }
+  h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.02em; }
+  .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 32px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .card h2 { font-weight: 600; margin-bottom: 16px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75rem; }
+  .card.full { grid-column: 1 / -1; }
+  .chart-container { position: relative; height: 320px; }
+  .chart-container.tall { height: 400px; }
+  .kpi-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 32px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; }
+  .kpi .value { font-size: 1.8rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+  .kpi .label { font-size: 0.75rem; color: var(--text-muted); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .kpi .sub { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  th { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  th.right, td.right { text-align: right; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .name-cell { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .quality-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .dev-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .dev-card .dev-name { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 1rem; margin-bottom: 14px; }
+  .dev-card .stat { display: flex; justify-content: space-between; padding: 6px 0; font-size: 0.8rem; }
+  .dev-card .stat .k { color: var(--text-muted); }
+  .dev-card .stat .v { font-variant-numeric: tabular-nums; font-weight: 500; }
+  .repo-bar { display: flex; gap: 2px; margin-top: 8px; height: 6px; border-radius: 3px; overflow: hidden; }
+  .repo-bar span { display: block; }
+  .legend-inline { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: 0.7rem; color: var(--text-muted); }
+  .legend-inline span { display: flex; align-items: center; gap: 4px; }
+  .legend-inline .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+</style>
+</head>
+<body>
+
+<h1>Developer Productivity</h1>
+<p class="subtitle" id="subtitle"></p>
+
+<div class="kpi-strip" id="kpiStrip"></div>
+
+<div class="grid">
+  <div class="card full"><h2>Tickets delivered / month (default branch)</h2><div class="chart-container tall"><canvas id="ticketsChart"></canvas></div></div>
+  <div class="card"><h2>Velocity — tickets / available workday</h2><div class="chart-container"><canvas id="velocityChart"></canvas></div></div>
+  <div class="card"><h2>Fix ratio — % fix commits</h2><div class="chart-container"><canvas id="fixRatioChart"></canvas></div></div>
+  <div class="card"><h2>Utilization — active days / available days</h2><div class="chart-container"><canvas id="utilChart"></canvas></div></div>
+  <div class="card"><h2>Mean lines / commit</h2><div class="chart-container"><canvas id="linesPerCommitChart"></canvas></div></div>
+  <div class="card"><h2>Commits delivered / month</h2><div class="chart-container"><canvas id="commitsChart"></canvas></div></div>
+  <div class="card"><h2>Lines changed (ins + del) / month</h2><div class="chart-container"><canvas id="linesChart"></canvas></div></div>
+
+  <div class="card full">
+    <h2>Per-developer summary (default branch, full period)</h2>
+    <table id="summaryTable"><thead id="summaryHead"></thead><tbody id="summaryBody"></tbody></table>
+    <p id="summaryNote" style="color:var(--text-muted); font-size:0.72rem; margin-top:14px;"></p>
+  </div>
+
+  <div class="card full"><h2>Per-developer quality detail</h2><div class="quality-grid" id="qualityGrid"></div></div>
+</div>
+
+<script>
+const D = window.DATA;
+const HIDDEN = new Set(D.metadata?.hidden_from_charts || []);
+const FLOOR = D.metadata?.noise_floor ?? 5;
+const devs = Object.keys(D.developers)
+  .filter(n => !HIDDEN.has(n))
+  .filter(n => (D.developers[n].commits_main || D.developers[n].commits || 0) >= FLOOR)
+  .sort((a, b) => (D.developers[b].tickets || 0) - (D.developers[a].tickets || 0));
+
+const palette = [
+  { line: '#818cf8', bg: 'rgba(129,140,248,0.15)' }, { line: '#34d399', bg: 'rgba(52,211,153,0.15)' },
+  { line: '#f59e0b', bg: 'rgba(245,158,11,0.15)' }, { line: '#f87171', bg: 'rgba(248,113,113,0.15)' },
+  { line: '#a78bfa', bg: 'rgba(167,139,250,0.15)' }, { line: '#fb923c', bg: 'rgba(251,146,60,0.15)' },
+  { line: '#38bdf8', bg: 'rgba(56,189,248,0.15)' }, { line: '#4ade80', bg: 'rgba(74,222,128,0.15)' },
+];
+const colorOf = (i) => palette[i % palette.length];
+
+// Repo palette derived from the data — stable color per repo across all cards.
+const allRepos = [...new Set(Object.values(D.developers).flatMap(d => Object.keys(d.repos_touched || {})))].sort();
+const REPO_COLORS = Object.fromEntries(allRepos.map((r, i) => [r, palette[i % palette.length].line]));
+const repoColor = (r) => REPO_COLORS[r] || '#8b8d97';
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const monthLabels = D.monthly.months.map(m => { const [y, mo] = m.split('-'); return MONTHS[parseInt(mo)-1] + ' ' + y.slice(2); });
+const singleMonth = monthLabels.length <= 1;
+
+document.getElementById('subtitle').innerHTML =
+  `${monthLabels[0]} &rarr; ${monthLabels[monthLabels.length-1]} (${D.metadata.months} mo) · ${D.metadata.repos.length} repo(s) · available days = weekdays − holidays − leaves`;
+
+const totalTickets = devs.reduce((s, n) => s + (D.developers[n].tickets || 0), 0);
+const totalCommits = devs.reduce((s, n) => s + (D.developers[n].commits_main || D.developers[n].commits || 0), 0);
+const topVel = devs.slice().sort((a,b) => (D.developers[b].velocity_tickets_per_workday||0) - (D.developers[a].velocity_tickets_per_workday||0))[0];
+const lowestFix = devs.slice().filter(n => (D.developers[n].commits_main||D.developers[n].commits||0) >= 30)
+  .sort((a,b) => (D.developers[a].fix_ratio_pct||0) - (D.developers[b].fix_ratio_pct||0))[0];
+
+const kpis = [
+  [totalTickets.toLocaleString('en-US'), 'Tickets delivered', `${devs.length} devs · ${D.metadata.months} mo`],
+  [totalCommits.toLocaleString('en-US'), 'Commits delivered', 'default branch'],
+  [devs.length, 'Active developers', `≥ ${FLOOR} commits`],
+  [topVel ? `${D.developers[topVel].velocity_tickets_per_workday}` : '—', 'Top velocity', topVel ? `${topVel.split(' ')[0]} · tix/day` : ''],
+  [lowestFix ? `${D.developers[lowestFix].fix_ratio_pct}%` : '—', 'Lowest fix ratio', lowestFix ? `${lowestFix.split(' ')[0]}` : ''],
+];
+document.getElementById('kpiStrip').innerHTML = kpis
+  .map(([v, l, sub]) => `<div class="kpi"><div class="value">${v}</div><div class="label">${l}</div><div class="sub">${sub||''}</div></div>`).join('');
+
+const chartDefaults = {
+  responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+  plugins: { legend: { position: 'bottom', labels: { color: '#8b8d97', usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } } },
+  scales: { x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b8d97', font: { size: 11 } } },
+            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b8d97', font: { size: 11 } }, beginAtZero: true } }
+};
+const seriesType = singleMonth ? 'bar' : 'line';
+function makeDS(name, color, data) {
+  if (singleMonth) return { label: name, data, backgroundColor: color.line, borderRadius: 4 };
+  return { label: name, data, borderColor: color.line, backgroundColor: color.bg, borderWidth: 2.5,
+           pointRadius: 4, pointHoverRadius: 6, pointBackgroundColor: color.line, tension: 0.3, fill: false };
+}
+function lineChart(canvasId, series, opts) {
+  new Chart(document.getElementById(canvasId), {
+    type: seriesType,
+    data: { labels: monthLabels, datasets: devs.map((n, i) => makeDS(n, colorOf(i), series[n] || [])) },
+    options: Object.assign({}, chartDefaults, opts || {})
+  });
+}
+
+lineChart('ticketsChart', D.monthly.tickets);
+lineChart('velocityChart', D.monthly.velocity);
+lineChart('fixRatioChart', D.monthly.fix_ratio);
+lineChart('utilChart', D.monthly.utilization);
+lineChart('commitsChart', D.monthly.commits);
+
+const linesPerCommitSeries = {};
+devs.forEach(n => {
+  const lines = D.monthly.lines[n] || [], commits = D.monthly.commits[n] || [];
+  linesPerCommitSeries[n] = lines.map((l, j) => commits[j] ? Math.round(l / commits[j]) : 0);
+});
+lineChart('linesPerCommitChart', linesPerCommitSeries);
+
+new Chart(document.getElementById('linesChart'), {
+  type: 'bar',
+  data: { labels: monthLabels, datasets: devs.map((n, i) => ({ label: n, data: D.monthly.lines[n] || [], backgroundColor: colorOf(i).line, borderRadius: 4 })) },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true } } }
+});
+
+const trendHeader = singleMonth ? '' : '<th class="right">Trend tix</th>';
+document.getElementById('summaryHead').innerHTML = `
+  <tr><th>Developer</th><th>Main repo</th><th class="right">Tickets</th><th class="right">Avail. days</th>
+  <th class="right">Velocity</th><th class="right">Util.</th><th class="right">Fix ratio</th><th class="right">Reverts</th>
+  <th class="right">Lines/cmt</th><th class="right">In progress / total</th>${trendHeader}</tr>`;
+document.getElementById('summaryNote').innerHTML =
+  'Computed on each repo\'s default branch. Available days = weekdays − holidays − leaves (from config). ' +
+  'Velocity = tickets delivered / available days. Fix ratio = % commits matching <code>fix/hotfix/bugfix</code>. ' +
+  'In progress = tickets touched on any branch with no commit on the default branch.';
+
+const tbody = document.getElementById('summaryBody');
+devs.forEach((name, i) => {
+  const d = D.developers[name];
+  const tickets = D.monthly.tickets[name] || [];
+  const last = tickets[tickets.length - 1] || 0;
+  const prev = tickets.length > 1 ? tickets.slice(0, -1).reduce((s, v) => s + v, 0) / (tickets.length - 1) : 0;
+  const trend = prev > 0 ? Math.round((last - prev) / prev * 100) : 0;
+  const trendClass = trend > 10 ? 'good' : trend < -10 ? 'bad' : '';
+  const trendIcon = trend > 10 ? '▲' : trend < -10 ? '▼' : '▶';
+  const color = colorOf(i).line;
+  const fixRatio = d.fix_ratio_pct || 0;
+  const fixClass = fixRatio < 25 ? 'good' : fixRatio > 40 ? 'bad' : 'warn';
+  const util = d.utilization_pct || 0;
+  const utilClass = util >= 90 ? 'good' : util < 75 ? 'bad' : '';
+  const inProgress = d.tickets_in_progress || 0;
+  const touchedTotal = d.tickets_touched_total || d.tickets || 0;
+  const inProgressClass = inProgress > 5 ? 'warn' : '';
+  const trendCell = singleMonth ? '' : `<td class="right"><span class="${trendClass}">${trendIcon} ${trend > 0 ? '+' : ''}${trend}%</span></td>`;
+  tbody.insertAdjacentHTML('beforeend', `
+    <tr><td><div class="name-cell"><span class="dot" style="background:${color}"></span>${name}</div></td>
+      <td><span style="color:var(--text-muted)">${d.primary_repo || '—'}</span></td>
+      <td class="right">${d.tickets}</td>
+      <td class="right">${d.workdays_available ?? '—'}<span style="color:var(--text-muted); font-size:0.7em"> (${d.leave_days ?? 0}d off)</span></td>
+      <td class="right"><strong>${d.velocity_tickets_per_workday ?? '—'}</strong></td>
+      <td class="right"><span class="${utilClass}">${util}%</span></td>
+      <td class="right"><span class="${fixClass}">${fixRatio}%</span></td>
+      <td class="right">${d.revert_commits ?? 0}</td>
+      <td class="right">${d.mean_lines_per_commit ?? '—'}</td>
+      <td class="right"><span class="${inProgressClass}">${inProgress} / ${touchedTotal}</span></td>
+      ${trendCell}</tr>`);
+});
+
+const grid = document.getElementById('qualityGrid');
+devs.forEach((name, i) => {
+  const d = D.developers[name];
+  const color = colorOf(i).line;
+  const repos = d.repos_touched || {};
+  const totalRepoCommits = Object.values(repos).reduce((s, v) => s + v, 0) || 1;
+  const repoBar = Object.entries(repos).sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => ({ repo: r, w: (n / totalRepoCommits * 100).toFixed(1), c: repoColor(r), n }));
+  const fixRatio = d.fix_ratio_pct || 0;
+  const fixClass = fixRatio < 25 ? 'good' : fixRatio > 40 ? 'bad' : 'warn';
+  grid.insertAdjacentHTML('beforeend', `
+    <div class="dev-card">
+      <div class="dev-name"><span class="dot" style="background:${color}"></span>${name}</div>
+      <div class="stat"><span class="k">Tickets delivered</span><span class="v">${d.tickets}</span></div>
+      <div class="stat"><span class="k">Velocity (tix/avail. day)</span><span class="v">${d.velocity_tickets_per_workday}</span></div>
+      <div class="stat"><span class="k">Available / leave days</span><span class="v">${d.workdays_available}d / ${d.leave_days}d off</span></div>
+      <div class="stat"><span class="k">Utilization</span><span class="v">${d.utilization_pct}%</span></div>
+      <div class="stat"><span class="k">Fix ratio</span><span class="v ${fixClass}">${fixRatio}%</span></div>
+      <div class="stat"><span class="k">Reverts authored</span><span class="v">${d.revert_commits}</span></div>
+      <div class="stat"><span class="k">Mean lines/commit</span><span class="v">${d.mean_lines_per_commit}</span></div>
+      <div class="stat"><span class="k">Big commits (&gt;${D.metadata.big_commit_lines || 500}L)</span><span class="v">${d.big_commits}</span></div>
+      <div class="stat"><span class="k">In progress (none on main)</span><span class="v">${d.tickets_in_progress}</span></div>
+      <div class="stat"><span class="k">Repos touched (≥${FLOOR})</span><span class="v">${d.repos_touched_count}</span></div>
+      <div style="margin-top: 10px;">
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px;">Split by repo</div>
+        <div class="repo-bar">${repoBar.map(b => `<span style="width:${b.w}%; background:${b.c}" title="${b.repo}: ${b.n}"></span>`).join('')}</div>
+        <div class="legend-inline">${repoBar.map(b => `<span><span class="sw" style="background:${b.c}"></span>${b.repo} ${b.n}</span>`).join('')}</div>
+      </div>
+    </div>`);
+});
+</script>
+</body>
+</html>
