@@ -24,14 +24,49 @@ if   [ -x "$CLAUDE_BIN" ];               then CLAUDE="$CLAUDE_BIN"
 elif command -v claude >/dev/null 2>&1;  then CLAUDE="claude"
 else CLAUDE=""; fi
 
+# Feeds claude's stdin: keeps it open (tail), and auto-answers the "resume from summary?" startup
+# prompt so an unattended session never hangs. Only acts if the prompt actually appears (a normal
+# spawn is unaffected). "2" = resume the full session as-is, preserving context.
+session_stdin(){
+  local log="$1" i=0
+  until grep -aq "Resume from summary" "$log" 2>/dev/null || [ "$i" -ge 30 ]; do sleep 1; i=$((i + 1)); done
+  grep -aq "Resume from summary" "$log" 2>/dev/null && printf '2\r'
+  tail -f /dev/null
+}
+
+# Launch a persistent Remote-Control session in a PTY; extra args ($3+) go to claude (e.g. --resume). Shared by spawn/resume.
+launch_session(){
+  local name="$1" cwd="$2"; shift 2
+  local log="$STATE_DIR/$name.log"
+  cd "$cwd" || die "cannot cd to $cwd"
+  case "$(uname -s)" in
+    Darwin) ( export TERM=xterm-256color; session_stdin "$log" | script -q "$log" "$CLAUDE" --remote-control "$name" "$@" $PERM ) >/dev/null 2>&1 & ;;
+    Linux)  local cmd; printf -v cmd '%q ' "$CLAUDE" --remote-control "$name" "$@" $PERM
+            ( export TERM=xterm-256color; session_stdin "$log" | script -qec "$cmd" "$log" ) >/dev/null 2>&1 & ;;
+    *)      die "unsupported OS $(uname -s)" ;;
+  esac
+  printf 'name=%s\ncwd=%s\nstarted=%s\nsubshell=%s\n' "$name" "$cwd" "$(date -u +%FT%TZ)" "$!" >"$STATE_DIR/$name.spawn"
+}
+
+slugify(){ printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-48 | sed 's/-*$//'; }
+nato_name(){
+  for w in alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike \
+           november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu; do
+    [ -e "$STATE_DIR/$w.spawn" ] || { echo "$w"; return; }
+  done
+  echo "claude-$(date +%H%M%S)"
+}
+
 usage(){ cat >&2 <<EOF
-usage: driver.sh <spawn|list|stop|check> [args]
-  spawn [name]          launch a PERSISTENT, VISIBLE session (Remote Control + 'claude agents')
-  list                  list spawned sessions (live/dead)
-  stop <name>           stop a session
-  check                 health (claude, script, perms, remote-control, sessions)
-spawn runs 'claude --remote-control <name>' in a PTY (script) so it stays visible & drivable
-from your phone/desktop. cwd MUST be a TRUSTED folder (default \$PWD; override CRS_SPAWN_CWD).
+usage: driver.sh <spawn|resume|list|stop|check> [args]
+  spawn [name]              launch a session; name from context, else NATO (alpha/bravo/charlie…)
+  resume <id> [name] [--in-place]  respawn an existing session by id (forks a fresh id; --in-place=same id)
+  list                     list spawned sessions (live/dead)
+  stop <name>              stop a session
+  check                    health (claude, script, perms, remote-control, sessions)
+spawn/resume run 'claude --remote-control <name> [--resume <id>]' in a PTY (script) so the session
+stays visible & drivable from your phone/desktop. To resume from a description, get the id with
+find-session, then 'resume <id>'. cwd MUST be a TRUSTED folder (default \$PWD; override CRS_SPAWN_CWD).
 env: CRS_CLAUDE_BIN, CRS_HEADLESS_STATE, CRS_SPAWN_CWD,
      CRS_HEADLESS_DANGEROUS, CRS_HEADLESS_PERM_FLAGS
 EOF
@@ -41,19 +76,42 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   spawn)
     need_claude; need_script
-    name="${1:-claude-$(date +%H%M%S)}"
-    if [ -e "$STATE_DIR/$name.spawn" ]; then die "session '$name' already exists (stop it first)"; fi
+    name="${1:-$(nato_name)}"
+    [ -e "$STATE_DIR/$name.spawn" ] && die "session '$name' already exists (stop it first)"
     cwd="${CRS_SPAWN_CWD:-$PWD}"
-    log="$STATE_DIR/$name.log"
-    cd "$cwd" || die "cannot cd to $cwd"
-    case "$(uname -s)" in
-      Darwin) ( export TERM=xterm-256color; tail -f /dev/null | script -q "$log" "$CLAUDE" --remote-control "$name" $PERM ) >/dev/null 2>&1 & ;;
-      Linux)  ( export TERM=xterm-256color; tail -f /dev/null | script -qec "$CLAUDE --remote-control $name $PERM" "$log" ) >/dev/null 2>&1 & ;;
-      *)      die "spawn: unsupported OS $(uname -s)" ;;
-    esac
-    printf 'name=%s\ncwd=%s\nstarted=%s\nsubshell=%s\n' "$name" "$cwd" "$(date -u +%FT%TZ)" "$!" >"$STATE_DIR/$name.spawn"
+    launch_session "$name" "$cwd" -n "$name"
     echo "$name"
     echo "spawned '$name' in $cwd — visible in Claude Code Remote Control (phone/desktop) + 'claude agents'. (cwd must be TRUSTED.)" >&2
+    ;;
+  resume)
+    need_claude; need_script
+    id=""; name=""; fork="--fork-session"
+    for a in "$@"; do
+      case "$a" in
+        --in-place|--no-fork) fork="" ;;
+        --fork)               fork="--fork-session" ;;
+        -*)                   die "unknown flag: $a" ;;
+        *)                    if [ -z "$id" ]; then id="$a"; elif [ -z "$name" ]; then name="$a"; fi ;;
+      esac
+    done
+    [ -n "$id" ] || die "resume needs a <session-id> (use find-session to resolve one from a description)"
+    projects="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+    tx="$(find "$projects" -maxdepth 2 -name "$id.jsonl" 2>/dev/null | head -1)"
+    [ -n "$tx" ] || die "no transcript for session '$id' under $projects (check the id)"
+    # recover Claude Code's own session title (last ai-title) so the resume is recognizable, not random
+    title="$(grep -o '"aiTitle": *"[^"]*"' "$tx" | tail -1 | sed 's/.*"aiTitle": *"//; s/"$//')"
+    display="${name:-${title:-resumed session}}"
+    [ -n "$name" ] || name="$(slugify "$title")"
+    [ -n "$name" ] || name="$(nato_name)"
+    [ -e "$STATE_DIR/$name.spawn" ] && die "session '$name' already exists (stop it first)"
+    rcwd="$(grep -m1 -o '"cwd":"[^"]*"' "$tx" | sed 's/^"cwd":"//; s/"$//')"
+    cwd="${CRS_SPAWN_CWD:-${rcwd:-$PWD}}"
+    [ -d "$cwd" ] || die "session cwd '$cwd' not found (override with CRS_SPAWN_CWD)"
+    launch_session "$name" "$cwd" --resume "$id" -n "$display" $fork
+    { echo "resumed=$id"; echo "title=$display"; } >>"$STATE_DIR/$name.spawn"
+    mode=$([ -n "$fork" ] && echo "new forked id" || echo "in-place, same id")
+    echo "$name"
+    echo "resumed $id as '$display' (handle: $name) in $cwd — Remote Control + 'claude agents' ($mode)." >&2
     ;;
   list)
     shopt -s nullglob; spawns=("$STATE_DIR"/*.spawn)
@@ -61,7 +119,8 @@ case "$cmd" in
     for s in "${spawns[@]}"; do
       n="$(basename "$s" .spawn)"
       state="dead"; if is_running "$(spawn_get "$n" subshell)"; then state="live"; fi
-      printf '%-22s %-6s started=%s  cwd=%s\n' "$n" "$state" "$(spawn_get "$n" started)" "$(spawn_get "$n" cwd)"
+      ri="$(spawn_get "$n" resumed)"; ri="${ri:+  resumed=$ri}"
+      printf '%-22s %-6s started=%s  cwd=%s%s\n' "$n" "$state" "$(spawn_get "$n" started)" "$(spawn_get "$n" cwd)" "$ri"
     done
     ;;
   stop)
