@@ -154,7 +154,7 @@ def main():
             "first_day": min(days) if days else None,
             "last_day": max(days) if days else None,
             "active_days": len(set(days)),
-            "tool": "claude-code-diagnosis 1.0 / multiprovider",
+            "tool": "coding-agent-usage 1.0 / multiprovider",
         },
         "totals": {
             "cost": round(total, 2),

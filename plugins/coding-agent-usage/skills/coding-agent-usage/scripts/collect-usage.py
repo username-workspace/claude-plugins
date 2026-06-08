@@ -313,7 +313,7 @@ def main():
 
     out = {
         "metadata": {
-            "tool": "claude-code-diagnosis 1.0",
+            "tool": "coding-agent-usage 1.0",
             "scope": root,
             "files": len(files),
             "first_day": first_dt.date().isoformat() if first_dt else None,

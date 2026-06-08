@@ -1,7 +1,7 @@
 import json, os, re, ssl, time, math, urllib.request
 
 SOURCE_URL = "https://code.claude.com/docs/en/costs"
-CACHE_PATH = os.path.expanduser("~/.cache/claude-code-diagnosis/benchmark.json")
+CACHE_PATH = os.path.expanduser("~/.cache/coding-agent-usage/benchmark.json")
 TTL_SECONDS = 24 * 3600
 Z90 = 1.2815515594
 
@@ -22,7 +22,7 @@ def fit_lognormal(mean, p90):
 
 
 def fetch_live(timeout=15):
-    req = urllib.request.Request(SOURCE_URL, headers={"User-Agent": "claude-code-diagnosis"})
+    req = urllib.request.Request(SOURCE_URL, headers={"User-Agent": "coding-agent-usage"})
     html = urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()).read().decode("utf-8", "ignore")
     mean = re.search(r"\$(\d+(?:\.\d+)?)\s+per developer per active day", html)
     p90 = re.search(r"below\s+\$(\d+)\s+per active day for 90", html)
