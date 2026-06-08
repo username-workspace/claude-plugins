@@ -38,6 +38,14 @@
       "description": "Find and resume a past Claude Code session from a search term — decomposes the query, cross-matches local transcripts, and returns the best session ID with a ready claude --resume command. Project-aware, macOS and Linux.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/find-session"
+    },
+    {
+      "name": "security-audit",
+      "version": "1.0.0",
+      "source": "./plugins/security-audit",
+      "description": "Full Trivy security audit — dependency CVEs across every ecosystem, secrets, and IaC misconfigurations — as a prioritised Markdown report. Report-only, language-agnostic, Trivy the only dependency.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/security-audit"
     }
   ]
 }
