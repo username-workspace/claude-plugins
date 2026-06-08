@@ -1,0 +1,12 @@
+{
+  "name": "find-session",
+  "version": "1.0.0",
+  "description": "Find and resume a past Claude Code session from a search term — decomposes the query into concept terms, cross-matches the local transcripts, and returns the best session ID with a ready `claude --resume` command. Interactive Claude Code; macOS and Linux.",
+  "author": {
+    "name": "Username",
+    "email": "admin@username.digital"
+  },
+  "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/find-session",
+  "repository": "https://github.com/username-workspace/skills",
+  "license": "MIT"
+}

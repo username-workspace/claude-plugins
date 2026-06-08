@@ -1,0 +1,12 @@
+{
+  "category": "Agents",
+  "tagline": "Find and resume the past Claude Code session you're thinking of.",
+  "summary": "Describe the work — a topic, a file, a ticket — and find the Claude Code session where it happened. It turns your phrasing into concept terms, cross-matches them against your local transcripts, ranks the candidates by mentions and recency, and hands back the session ID with a ready `claude --resume` command. Defaults to the current project and widens to every project when needed.",
+  "capabilities": [
+    "Turns a natural-language query into cross-matched concept terms — all must appear in a session",
+    "Ranks candidates by mentions and recency, using density and the dominant key to flag reports over real work sessions",
+    "Returns the best session ID with a ready-to-run `claude --resume <id>` command",
+    "Searches the current project or every project under local ~/.claude/projects transcripts"
+  ],
+  "platforms": ["macOS", "Linux"]
+}
