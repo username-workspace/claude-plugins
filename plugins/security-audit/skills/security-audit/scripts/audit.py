@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -239,9 +239,11 @@ def run_trivy(path, scanners, severity, skip_dirs, skip_files):
 
 
 def collect(data):
-    vulns, secrets, misconfigs = [], [], []
+    vulns, secrets, misconfigs, dep_targets = [], [], [], set()
     for res in data.get("Results") or []:
         target = res.get("Target", "?")
+        if res.get("Class") == "lang-pkgs":
+            dep_targets.add(target)
         for v in res.get("Vulnerabilities") or []:
             vulns.append({
                 "sev": v.get("Severity", "UNKNOWN"),
@@ -266,7 +268,24 @@ def collect(data):
                 "title": s.get("Title", ""),
                 "target": f"{target}:{s.get('StartLine', '?')}",
             })
-    return vulns, secrets, misconfigs
+    return vulns, secrets, misconfigs, dep_targets
+
+
+def classify_vulns(vulns, dep_targets):
+    """Tag each vuln primary (prod) vs secondary. A lockfile nested under another lockfile of the
+    same kind is a bundled sub-project / tooling (e.g. Magento's update/ updater) — not the prod
+    dependency set — so its vulns are separated out. Tool-agnostic: works for any ecosystem."""
+    def parts(t):
+        return (t.rsplit("/", 1)[0] if "/" in t else "", t.rsplit("/", 1)[-1])
+    dirs_by_lockfile = defaultdict(set)
+    for t in dep_targets:
+        d, base = parts(t)
+        dirs_by_lockfile[base].add(d)
+    for v in vulns:
+        d, base = parts(v["target"])
+        v["primary"] = not any(
+            od != d and (od == "" or d.startswith(od + "/")) for od in dirs_by_lockfile[base]
+        )
 
 
 def table(rows, header, make_row, limit):
@@ -282,14 +301,16 @@ def table(rows, header, make_row, limit):
 def report(path, vulns, secrets, misconfigs, limit, footer, warn):
     total = len(vulns) + len(secrets) + len(misconfigs)
     counts = Counter(x["sev"].upper() for x in vulns + secrets + misconfigs)
-    fixable = by_severity([v for v in vulns if v["fixed"]])
-    nofix = by_severity([v for v in vulns if not v["fixed"]])
+    fixable = by_severity([v for v in vulns if v["fixed"] and v.get("primary", True)])
+    nofix = by_severity([v for v in vulns if not v["fixed"] and v.get("primary", True)])
+    nested = by_severity([v for v in vulns if not v.get("primary", True)])
 
     sev = " · ".join(f"{counts[s]} {s.lower()}" for s in sorted(counts, key=lambda s: SEV_ORDER.get(s, 9)))
+    nested_note = f" · {len(nested)} in nested sub-projects" if nested else ""
     md = [f"# Security audit — `{path}`", ""]
     md.append(f"> **{total} findings** — {sev or 'none'}")
     md.append(">")
-    md.append(f"> vulnerabilities: {len(vulns)} ({len(fixable)} fixable) · secrets: {len(secrets)} · misconfig: {len(misconfigs)}")
+    md.append(f"> vulnerabilities: {len(vulns) - len(nested)} prod ({len(fixable)} fixable){nested_note} · secrets: {len(secrets)} · misconfig: {len(misconfigs)}")
     md.append(">")
     md.append(f"> _{footer}_")
     md.append("")
@@ -316,6 +337,15 @@ def report(path, vulns, secrets, misconfigs, limit, footer, warn):
             nofix,
             "| Sev | Package | Installed | Advisory | Target |",
             lambda v: f"| {v['sev']} | `{cell(v['pkg'])}` | {cell(v['installed'])} | {link(cell(v['id']), v['url'])} | {cell(v['target'])} |",
+            limit,
+        )
+        md.append("")
+    if nested:
+        md.append("## Vulnerabilities — nested sub-projects (likely tooling, not shipped to prod — verify)")
+        md += table(
+            nested,
+            "| Sev | Package | Installed | → Fixed | Advisory | Target |",
+            lambda v: f"| {v['sev']} | `{cell(v['pkg'])}` | {cell(v['installed'])} | {cell(v['fixed']) or '—'} | {link(cell(v['id']), v['url'])} | {cell(v['target'])} |",
             limit,
         )
         md.append("")
@@ -392,17 +422,21 @@ def _table(headers, rows):
 def report_html(path, vulns, secrets, misconfigs, footer, warn):
     e = html.escape
     counts = Counter(x["sev"].upper() for x in vulns + secrets + misconfigs)
-    fixable = by_severity([v for v in vulns if v["fixed"]])
-    nofix = by_severity([v for v in vulns if not v["fixed"]])
+    fixable = by_severity([v for v in vulns if v["fixed"] and v.get("primary", True)])
+    nofix = by_severity([v for v in vulns if not v["fixed"] and v.get("primary", True)])
+    nested = by_severity([v for v in vulns if not v.get("primary", True)])
     total = len(vulns) + len(secrets) + len(misconfigs)
+    prod_vulns = len(vulns) - len(nested)
 
     def adv(v):
         return f'<a href="{e(v["url"])}">{e(v["id"])}</a>' if v["url"] else e(v["id"])
 
     kpis = [("findings", total, True), ("critical", counts.get("CRITICAL", 0), False),
             ("high", counts.get("HIGH", 0), False), ("medium", counts.get("MEDIUM", 0), False),
-            ("vulns fixable", f"{len(fixable)}/{len(vulns)}", False),
+            ("vulns fixable", f"{len(fixable)}/{prod_vulns}", False),
             ("secrets", len(secrets), False), ("misconfig", len(misconfigs), False)]
+    if nested:
+        kpis.append(("nested (tooling)", len(nested), False))
     kpi_html = "".join(
         f'<div class="kpi{" lead" if lead else ""}"><div class="value">{v}</div>'
         f'<div class="label">{e(l)}</div></div>' for l, v, lead in kpis)
@@ -417,6 +451,11 @@ def report_html(path, vulns, secrets, misconfigs, footer, warn):
         rows = [[_badge(v["sev"]), f'<code>{e(v["pkg"])}</code>', e(v["installed"]), adv(v), e(v["target"])] for v in nofix]
         sections.append(("Vulnerabilities — no fix available",
                          _table(["Sev", "Package", "Installed", "Advisory", "Target"], rows)))
+    if nested:
+        rows = [[_badge(v["sev"]), f'<code>{e(v["pkg"])}</code>', e(v["installed"]),
+                 f'<span class="fix">{e(v["fixed"])}</span>' if v["fixed"] else "—", adv(v), e(v["target"])] for v in nested]
+        sections.append(("Vulnerabilities — nested sub-projects (likely tooling, not shipped to prod — verify)",
+                         _table(["Sev", "Package", "Installed", "→ Fixed", "Advisory", "Target"], rows)))
     if secrets:
         rows = [[_badge(s["sev"]), e(s["rule"]), e(s["target"])] for s in by_severity(secrets)]
         sections.append(("Secrets", _table(["Sev", "Rule", "Location"], rows)))
@@ -483,7 +522,8 @@ def main():
     skip_dirs = list(dict.fromkeys(skip_dirs))
     skip_files = list(dict.fromkeys(skip_files))
     data = run_trivy(target, args.scanners, args.severity, skip_dirs, skip_files)
-    vulns, secrets, misconfigs = collect(data)
+    vulns, secrets, misconfigs, dep_targets = collect(data)
+    classify_vulns(vulns, dep_targets)
 
     version = trivy_version()
     fresh_line, db_warn = db_freshness()

@@ -39,6 +39,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path] \
   of scope — and also skips nested git worktrees (duplicate checkouts) and test dirs
   (`tests`/`test`/`__tests__`, not prod-shipped). The footer notes what was dropped. Add more with
   `--skip-dirs`; restore any with `--include-gitignored` / `--include-worktrees` / `--include-tests`.
+- **Prod vs tooling**: dependency vulns whose lockfile is **nested under another lockfile of the same
+  kind** (a bundled sub-project / tool — e.g. Magento's `update/` updater) are auto-separated into a
+  "nested sub-projects" section and excluded from the prod count, so frozen tooling deps don't masquerade
+  as real findings. Tool-agnostic (any ecosystem). The headline counts reflect the prod dependency set.
 - Only external dependency is **Trivy**; the script parses its JSON with the stdlib (no jq).
 - The report footer shows the Trivy version (validated against the latest release on every run,
   cached for 24h) and the vuln-DB freshness; `--no-version-check` skips the version check (offline/CI).

@@ -7,6 +7,7 @@
     "Adds hard-coded secret detection and IaC misconfiguration checks (Dockerfile, Terraform, Kubernetes)",
     "Outputs both Markdown and a self-contained dark HTML dashboard (Username design system): fixable findings first, with severity and fix versions",
     "Audits the repo, not local junk — honours .gitignore across submodules and skips git worktrees and test dirs",
+    "Separates prod dependencies from nested sub-project / tooling lockfiles (e.g. bundled updaters), cutting false positives — tool-agnostic",
     "Report-only and dependency-light — Trivy is the single external tool, parsed with the stdlib (no jq)",
     "Reports vuln-DB freshness, and validates the Trivy version every run (cached daily) — flagging a stale DB or an outdated binary"
   ],
