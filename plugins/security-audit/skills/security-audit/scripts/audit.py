@@ -24,6 +24,7 @@ Writes the Markdown report to stdout. Exit 3 if Trivy is missing, 1 on scan fail
 """
 
 import argparse
+import html
 import json
 import os
 import re
@@ -339,12 +340,120 @@ def report(path, vulns, secrets, misconfigs, limit, footer, warn):
     return "\n".join(md).rstrip() + "\n"
 
 
+SEV_CLASS = {"CRITICAL": "crit", "HIGH": "high", "MEDIUM": "med", "LOW": "low", "UNKNOWN": "unk"}
+
+HTML_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&display=swap');
+:root{--dark:#0c0d10;--on-dark:#fafafa;--stamp:#a8231f;--blueprint:#3d5a7f;--ink-faint:#8f8c86;--hairline:rgba(255,255,255,.14);--hairline-faint:rgba(255,255,255,.07);--surface:rgba(255,255,255,.025);--fd:'Newsreader',Georgia,serif;--fb:'Inter',system-ui,sans-serif;--fm:'JetBrains Mono',ui-monospace,Menlo,monospace;--bp:rgba(255,255,255,.04)}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--fb);color:var(--on-dark);padding:48px 40px;min-height:100vh;background:radial-gradient(900px 520px at 88% -8%,rgba(168,35,31,.16),transparent 60%),radial-gradient(800px 520px at -5% 4%,rgba(61,90,127,.18),transparent 55%),linear-gradient(var(--bp) 1px,transparent 1px) 0 0/40px 40px,linear-gradient(90deg,var(--bp) 1px,transparent 1px) 0 0/40px 40px,var(--dark)}
+.wrap{max-width:1180px;margin:0 auto}
+.eyebrow{font-family:var(--fm);font-size:.72rem;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint);display:inline-flex;align-items:center;gap:10px}
+.eyebrow::before{content:'';width:22px;height:2px;background:var(--stamp);display:inline-block}
+h1{font-family:var(--fd);font-weight:500;font-size:2.4rem;line-height:1.05;letter-spacing:-.025em;margin:14px 0 6px}
+h1 em{font-style:italic;color:var(--stamp);font-weight:600}
+.subtitle{font-family:var(--fm);color:var(--ink-faint);font-size:.7rem;letter-spacing:.03em;margin-bottom:32px;word-break:break-all}
+.warn{font-family:var(--fm);font-size:.72rem;color:#d2a36a;border:1px solid rgba(154,123,74,.5);background:rgba(154,123,74,.1);padding:12px 16px;margin-bottom:28px}
+.kpi-strip{display:flex;flex-wrap:wrap;border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline);padding:22px 0;margin-bottom:40px}
+.kpi{padding:2px 26px;border-left:1px solid var(--hairline-faint);flex:1;min-width:115px}
+.kpi:first-child{padding-left:0;border-left:none}
+.kpi .value{font-family:var(--fd);font-weight:600;font-size:2.1rem;line-height:1}
+.kpi.lead .value{color:var(--stamp)}
+.kpi .label{font-family:var(--fm);font-size:.58rem;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);margin-top:11px}
+section{margin-bottom:32px}
+section h2{font-family:var(--fm);font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.12em;font-size:.68rem;margin-bottom:14px}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--hairline);color:var(--ink-faint);font-family:var(--fm);font-weight:500;font-size:.58rem;text-transform:uppercase;letter-spacing:.1em}
+td{padding:10px 12px;border-bottom:1px solid var(--hairline-faint);font-family:var(--fm);font-variant-numeric:tabular-nums;vertical-align:top;word-break:break-word}
+tr:last-child td{border-bottom:none}
+td a{color:var(--blueprint);text-decoration:none}td a:hover{text-decoration:underline}
+.fix{color:#8fbf9f}
+.sev{font-family:var(--fm);font-size:.56rem;font-weight:600;letter-spacing:.06em;padding:3px 7px;border:1px solid;text-transform:uppercase;white-space:nowrap}
+.sev.crit{color:#e5827f;border-color:rgba(168,35,31,.6);background:rgba(168,35,31,.14)}
+.sev.high{color:#d2a36a;border-color:rgba(154,123,74,.5);background:rgba(154,123,74,.12)}
+.sev.med{color:#8fa9c9;border-color:rgba(61,90,127,.55);background:rgba(61,90,127,.12)}
+.sev.low,.sev.unk{color:var(--ink-faint);border-color:var(--hairline)}
+.empty{font-family:var(--fb);color:var(--ink-faint);font-size:1.1rem;padding:32px 0}
+footer{font-family:var(--fm);font-size:.62rem;color:var(--ink-faint);margin-top:40px;border-top:1px solid var(--hairline-faint);padding-top:16px}
+"""
+
+
+def _badge(sev):
+    return f'<span class="sev {SEV_CLASS.get(sev.upper(), "unk")}">{html.escape(sev)}</span>'
+
+
+def _table(headers, rows):
+    th = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    return f"<table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
+
+
+def report_html(path, vulns, secrets, misconfigs, footer, warn):
+    e = html.escape
+    counts = Counter(x["sev"].upper() for x in vulns + secrets + misconfigs)
+    fixable = by_severity([v for v in vulns if v["fixed"]])
+    nofix = by_severity([v for v in vulns if not v["fixed"]])
+    total = len(vulns) + len(secrets) + len(misconfigs)
+
+    def adv(v):
+        return f'<a href="{e(v["url"])}">{e(v["id"])}</a>' if v["url"] else e(v["id"])
+
+    kpis = [("findings", total, True), ("critical", counts.get("CRITICAL", 0), False),
+            ("high", counts.get("HIGH", 0), False), ("medium", counts.get("MEDIUM", 0), False),
+            ("vulns fixable", f"{len(fixable)}/{len(vulns)}", False),
+            ("secrets", len(secrets), False), ("misconfig", len(misconfigs), False)]
+    kpi_html = "".join(
+        f'<div class="kpi{" lead" if lead else ""}"><div class="value">{v}</div>'
+        f'<div class="label">{e(l)}</div></div>' for l, v, lead in kpis)
+
+    sections = []
+    if fixable:
+        rows = [[_badge(v["sev"]), f'<code>{e(v["pkg"])}</code>', e(v["installed"]),
+                 f'<span class="fix">{e(v["fixed"])}</span>', adv(v), e(v["target"])] for v in fixable]
+        sections.append(("Vulnerabilities — fixable",
+                         _table(["Sev", "Package", "Installed", "→ Fixed", "Advisory", "Target"], rows)))
+    if nofix:
+        rows = [[_badge(v["sev"]), f'<code>{e(v["pkg"])}</code>', e(v["installed"]), adv(v), e(v["target"])] for v in nofix]
+        sections.append(("Vulnerabilities — no fix available",
+                         _table(["Sev", "Package", "Installed", "Advisory", "Target"], rows)))
+    if secrets:
+        rows = [[_badge(s["sev"]), e(s["rule"]), e(s["target"])] for s in by_severity(secrets)]
+        sections.append(("Secrets", _table(["Sev", "Rule", "Location"], rows)))
+    if misconfigs:
+        rows = [[_badge(m["sev"]), e(m["id"]), e(m["title"]), e(m["target"])] for m in by_severity(misconfigs)]
+        sections.append(("Misconfigurations (IaC)", _table(["Sev", "ID", "Issue", "Target"], rows)))
+
+    body = "".join(f"<section><h2>{e(t)}</h2>{tbl}</section>" for t, tbl in sections)
+    if not body:
+        body = '<p class="empty">No findings at the requested severities. ✅</p>'
+    warn_html = f'<div class="warn">⚠ {e(warn)}</div>' if warn else ""
+
+    return (
+        '<!DOCTYPE html>\n<html lang="en"><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>Security audit — {e(path)}</title><style>{HTML_CSS}</style></head>\n"
+        '<body><div class="wrap">'
+        '<div class="eyebrow">Security audit</div>'
+        f"<h1><em>{total}</em> findings</h1>"
+        f'<div class="subtitle">{e(path)} · {e(footer)}</div>'
+        f"{warn_html}"
+        f'<div class="kpi-strip">{kpi_html}</div>'
+        f"{body}"
+        "<footer>Generated by security-audit (Trivy) · report-only</footer>"
+        "</div></body></html>\n"
+    )
+
+
 def main():
     ap = argparse.ArgumentParser(description="Full Trivy security audit → Markdown report.")
     ap.add_argument("path", nargs="?", default=".")
     ap.add_argument("--scanners", default="vuln,secret,misconfig")
     ap.add_argument("--severity", default="CRITICAL,HIGH,MEDIUM")
     ap.add_argument("--limit", type=int, default=100, help="max rows per table")
+    ap.add_argument("--format", choices=["md", "html", "both"], default="md",
+                    help="md (stdout), html (dark dashboard file), or both")
+    ap.add_argument("--out", default="security-audit.html", help="HTML output path (--format html/both)")
     ap.add_argument("--skip-dirs", default="", help="extra comma-separated dirs/globs to skip")
     ap.add_argument("--include-gitignored", action="store_true",
                     help="don't auto-skip git-ignored paths")
@@ -388,10 +497,15 @@ def main():
              + ([] if args.include_tests else ["test dirs"]))
     skip_note = f" · skipped {', '.join(notes)}" if notes else ""
     footer = f"scanner: Trivy {version}{status} · {fresh_line}{skip_note}"
-    print(report(target, vulns, secrets, misconfigs, args.limit, footer, db_warn))
 
-    if behind:
-        print(f"\n> Trivy {version} is behind {latest} — update it: {trivy_hint('upgrade')}.")
+    if args.format in ("md", "both"):
+        print(report(target, vulns, secrets, misconfigs, args.limit, footer, db_warn))
+        if behind:
+            print(f"\n> Trivy {version} is behind {latest} — update it: {trivy_hint('upgrade')}.")
+    if args.format in ("html", "both"):
+        out = Path(args.out)
+        out.write_text(report_html(target, vulns, secrets, misconfigs, footer, db_warn), encoding="utf-8")
+        print(f"HTML report → {out.resolve()}", file=sys.stderr if args.format == "both" else sys.stdout)
 
 
 if __name__ == "__main__":

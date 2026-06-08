@@ -23,10 +23,15 @@ and *to which version* to upgrade; applying the fix is their call.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path] \
-  [--scanners vuln,secret,misconfig] [--severity CRITICAL,HIGH,MEDIUM] [--limit 100]
+  [--scanners vuln,secret,misconfig] [--severity CRITICAL,HIGH,MEDIUM] [--limit 100] \
+  [--format md|html|both] [--out security-audit.html]
 ```
 
 - `path` defaults to the current directory; pass a repo root or subdirectory.
+- **Output**: `--format md` (default) prints Markdown to stdout (terminal/agent-friendly). `--format
+  html` writes a self-contained **dark dashboard** (Username design system, like delivery-metrics) to
+  `--out`; `both` does Markdown to stdout **and** the HTML file. For a human-readable / shareable
+  review, prefer `both`, then `open` the HTML.
 - Defaults scan vulns + secrets + misconfig at CRITICAL/HIGH/MEDIUM. Narrow with `--severity`
   (e.g. `CRITICAL,HIGH`) on noisy repos, or scope with `--scanners` (e.g. `vuln` only).
 - **The scan reflects the repo, not local junk.** By default it honours `.gitignore` (across
@@ -38,7 +43,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path] \
 - The report footer shows the Trivy version (validated against the latest release on every run,
   cached for 24h) and the vuln-DB freshness; `--no-version-check` skips the version check (offline/CI).
 
-The script writes the full Markdown report to stdout.
+Markdown goes to stdout; the HTML dashboard (when requested) is written to `--out`.
 
 ### 2. Report
 
