@@ -32,12 +32,12 @@
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/delivery-metrics"
     },
     {
-      "name": "claude-code-diagnosis",
+      "name": "coding-agent-usage",
       "version": "1.1.0",
-      "source": "./plugins/claude-code-diagnosis",
+      "source": "./plugins/coding-agent-usage",
       "description": "Diagnose your own Claude Code usage and benchmark it against Anthropic's published per-developer figures — an interactive HTML dashboard of cost, tokens, model mix, tool use, cache efficiency, per-project breakdown and a log-scale percentile gauge. Live, 24h-cached benchmark; multi-provider view (Claude + Codex + Gemini via ccusage). Cost reconciles within ~1% of ccusage.",
       "category": "development",
-      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/claude-code-diagnosis"
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/coding-agent-usage"
     },
     {
       "name": "find-session",
