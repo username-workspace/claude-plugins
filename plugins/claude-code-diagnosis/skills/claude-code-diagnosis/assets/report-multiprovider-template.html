@@ -66,6 +66,26 @@ tr:last-child td { border-bottom: none; }
 .fineprint code { color: var(--ink-muted); }
 .share-bar { display: flex; height: 30px; border-radius: 3px; overflow: hidden; margin-bottom: 26px; }
 .share-bar span { display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.62rem; font-weight: 600; color: #fff; }
+.hero { display: grid; grid-template-columns: 280px 1fr; gap: 36px; align-items: center; padding: 34px 32px; }
+.hero .pct-eyebrow { font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 4px; }
+.hero .pct-num { font-family: var(--font-display); font-weight: 600; font-size: 4.7rem; line-height: 0.96; color: var(--stamp); letter-spacing: -0.03em; white-space: nowrap; }
+.hero .pct-num .pct-unit { font-size: 0.42em; font-weight: 500; margin-left: 3px; color: var(--ink-muted); }
+.hero .band { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.78rem; color: var(--cream-muted); margin-top: 14px; }
+.hero-source { font-family: var(--font-mono); font-size: 0.62rem; line-height: 1.55; color: var(--ink-faint); margin-top: 16px; letter-spacing: 0.02em; }
+.hero-source a { color: var(--cream-muted); text-decoration: none; border-bottom: 1px solid var(--hairline); }
+.hero-source .src-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--hairline-faint); border-radius: 2px; color: var(--ink-faint); font-size: 0.92em; }
+.hero .lede { font-family: var(--font-display); font-size: 1.15rem; line-height: 1.5; color: var(--ink-muted); }
+.hero .lede strong { color: var(--on-dark); font-weight: 600; }
+.hero .lede em { color: var(--stamp); font-style: italic; }
+.track-wrap { margin-top: 48px; }
+.track { position: relative; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #2a3340 0%, #3d5a7f 45%, #9a7b4a 72%, #a8231f 100%); }
+.tick { position: absolute; top: -6px; width: 1.5px; height: 24px; background: var(--hairline); }
+.tick .cap { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: var(--font-mono); font-size: 0.58rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.08em; text-align: center; }
+.tick .cap b { color: var(--ink-muted); display: block; font-weight: 600; font-size: 0.64rem; }
+.you { position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; }
+.you .pin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--dark); }
+.you .lbl { font-family: var(--font-mono); font-size: 0.6rem; font-weight: 600; margin-top: 7px; white-space: nowrap; letter-spacing: 0.04em; }
+.track-axis { display: flex; justify-content: space-between; margin-top: 58px; font-family: var(--font-mono); font-size: 0.56rem; color: var(--ink-faint); letter-spacing: 0.08em; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
@@ -80,6 +100,22 @@ tr:last-child td { border-bottom: none; }
 <div class="share-bar" id="shareBar"></div>
 
 <div class="grid">
+  <div class="card full hero">
+    <div>
+      <div class="pct-eyebrow" id="pctEyebrow"></div>
+      <div class="pct-num" id="pctNum"></div>
+      <div class="band" id="bandLbl"></div>
+    </div>
+    <div>
+      <div class="lede" id="heroLede"></div>
+      <div class="track-wrap">
+        <div class="track" id="track"></div>
+        <div class="track-axis"><span id="axisLeft"></span><span>log scale · Anthropic Claude Code $/active-day</span><span id="axisRight"></span></div>
+      </div>
+      <div class="hero-source" id="heroSource"></div>
+    </div>
+  </div>
+
   <div class="card full"><h2>Spend by provider / month</h2><div class="chart-container"><canvas id="trendChart"></canvas></div></div>
   <div class="card"><h2>Total spend share</h2><div class="chart-container"><canvas id="provChart"></canvas></div></div>
   <div class="card">
@@ -117,6 +153,50 @@ document.getElementById('kpiStrip').innerHTML = kpis
 document.getElementById('shareBar').innerHTML = D.providers
   .filter(p => p.share_pct >= 1)
   .map(p => `<span style="width:${p.share_pct}%; background:${p.color}">${p.name} ${p.share_pct}%</span>`).join('');
+
+const P = D.percentile, BM = P.benchmark;
+const fmtPct = (p) => p >= 99 ? 'Top ' + (100 - p).toFixed(1) : p.toFixed(0) + 'th';
+const pinPct = (p) => p >= 99 ? '%' : ' pct';
+const pT = Math.min(P.total.percentile, 99.9), pA = Math.min(P.anthropic.percentile, 99.9);
+const isTopT = pT >= 99;
+document.getElementById('pctEyebrow').textContent = isTopT ? 'Top' : 'Percentile';
+document.getElementById('pctNum').innerHTML = isTopT
+  ? (100 - pT).toFixed(1) + '<span class="pct-unit">%</span>'
+  : pT.toFixed(0) + '<span class="pct-unit">th</span>';
+document.getElementById('bandLbl').textContent = P.total.band + ' · all providers';
+const bOrigin = BM.source_origin === 'live' ? 'live' : (BM.source_origin || '').indexOf('cache') >= 0 ? 'cached' : 'seed';
+document.getElementById('heroSource').innerHTML =
+  `Benchmark · <a href="${BM.source_url}" target="_blank" rel="noopener">${BM.source_label}</a> — avg $${BM.mean}/active-day, 90% &lt; $${BM.p90}/day · fetched ${BM.retrieved}<span class="src-tag">${bOrigin}</span>`;
+document.getElementById('heroLede').innerHTML =
+  `Across every coding agent you spend <strong>$${P.total.per_active_day.toFixed(0)}/active day</strong> of API-equivalent value — against an Anthropic-published Claude Code average of <strong>$${BM.mean}</strong> and a 90th-percentile of <strong>$${BM.p90}</strong>. ` +
+  `That is <em>${P.total.x_vs_mean}×</em> the typical developer's monthly spend. You sit in the <strong>${P.total.band.toLowerCase()}</strong> tier — and your <strong>Claude Code spend alone</strong> ($${P.anthropic.per_active_day.toFixed(0)}/day) already ranks ${P.anthropic.band.toLowerCase()}. No cross-provider benchmark is published, so both read against the Claude Code population.`;
+const DMIN = 2;
+const maxPin = Math.max(P.total.per_active_day, P.anthropic.per_active_day);
+const DMAX = Math.max(200, Math.ceil(maxPin * 1.35 / 50) * 50);
+const logPos = (x) => Math.max(0.4, Math.min(99.6, Math.log(x / DMIN) / Math.log(DMAX / DMIN) * 100));
+const medianV = Math.round(BM.median);
+const track = document.getElementById('track');
+[[medianV, 'Median'], [BM.mean, 'Average'], [BM.p90, '90th pct']].forEach(([val, cap]) => {
+  const el = document.createElement('div'); el.className = 'tick'; el.style.left = logPos(val) + '%';
+  el.innerHTML = `<div class="cap">${cap}<b>$${val}/d</b></div>`; track.appendChild(el);
+});
+function addDot(xpct, color) {
+  const d = document.createElement('div');
+  d.style.cssText = `position:absolute; left:${xpct}%; top:6px; width:13px; height:13px; margin:-6.5px 0 0 -6.5px; border-radius:50%; background:${color}; border:2px solid var(--dark); box-shadow:0 0 0 2px ${color}; z-index:3;`;
+  track.appendChild(d);
+}
+function addYouLabel(xpct, color, text, place) {
+  const l = document.createElement('div');
+  const y = place === 'above' ? 'bottom:21px;' : 'top:21px;';
+  l.style.cssText = `position:absolute; left:${xpct}%; ${y} transform:translateX(-100%); padding-right:12px; color:${color}; font-family:var(--font-mono); font-size:0.63rem; font-weight:600; white-space:nowrap; letter-spacing:0.03em;`;
+  l.textContent = text;
+  track.appendChild(l);
+}
+const cV = P.anthropic.per_active_day, tV = P.total.per_active_day;
+addDot(logPos(cV), '#3d5a7f'); addYouLabel(logPos(cV), '#8fb0cf', `Claude $${cV.toFixed(0)}/d`, 'above');
+addDot(logPos(tV), '#a8231f'); addYouLabel(logPos(tV), '#e0796f', `All $${tV.toFixed(0)}/d`, 'below');
+document.getElementById('axisLeft').textContent = '$' + DMIN + '/d';
+document.getElementById('axisRight').textContent = '$' + DMAX + '/d';
 
 Chart.defaults.color = '#b3a78f';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";

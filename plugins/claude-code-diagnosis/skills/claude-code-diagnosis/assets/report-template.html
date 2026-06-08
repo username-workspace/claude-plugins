@@ -66,13 +66,17 @@ h1 em { font-style: italic; color: var(--stamp); }
 
 /* Percentile hero */
 .hero { display: grid; grid-template-columns: 280px 1fr; gap: 36px; align-items: center; padding: 34px 32px; }
-.hero .pct-num { font-family: var(--font-display); font-weight: 600; font-size: 5.2rem; line-height: 0.9; color: var(--stamp); letter-spacing: -0.03em; }
-.hero .pct-num small { font-size: 1.6rem; color: var(--ink-muted); font-weight: 500; }
-.hero .band { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.78rem; color: var(--cream-muted); margin-top: 10px; }
+.hero .pct-eyebrow { font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 4px; }
+.hero .pct-num { font-family: var(--font-display); font-weight: 600; font-size: 4.7rem; line-height: 0.96; color: var(--stamp); letter-spacing: -0.03em; white-space: nowrap; }
+.hero .pct-num .pct-unit { font-size: 0.42em; font-weight: 500; margin-left: 3px; color: var(--ink-muted); }
+.hero .band { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.78rem; color: var(--cream-muted); margin-top: 14px; }
+.hero-source { font-family: var(--font-mono); font-size: 0.62rem; line-height: 1.55; color: var(--ink-faint); margin-top: 16px; letter-spacing: 0.02em; }
+.hero-source a { color: var(--cream-muted); text-decoration: none; border-bottom: 1px solid var(--hairline); }
+.hero-source .src-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--hairline-faint); border-radius: 2px; color: var(--ink-faint); font-size: 0.92em; }
 .hero .lede { font-family: var(--font-display); font-size: 1.18rem; line-height: 1.5; color: var(--ink-muted); }
 .hero .lede strong { color: var(--on-dark); font-weight: 600; }
 .hero .lede em { color: var(--stamp); font-style: italic; }
-.track-wrap { margin-top: 26px; }
+.track-wrap { margin-top: 48px; }
 .track { position: relative; height: 12px; border-radius: 6px; overflow: visible;
   background: linear-gradient(90deg, #2a3340 0%, #3d5a7f 45%, #9a7b4a 72%, #a8231f 100%); }
 .tick { position: absolute; top: -6px; width: 1.5px; height: 24px; background: var(--hairline); }
@@ -120,6 +124,7 @@ tr:last-child td { border-bottom: none; }
 <div class="grid">
   <div class="card full hero" id="heroCard">
     <div>
+      <div class="pct-eyebrow" id="pctEyebrow"></div>
       <div class="pct-num" id="pctNum"></div>
       <div class="band" id="bandLbl"></div>
     </div>
@@ -127,8 +132,9 @@ tr:last-child td { border-bottom: none; }
       <div class="lede" id="heroLede"></div>
       <div class="track-wrap">
         <div class="track" id="track"></div>
-        <div class="track-axis"><span>0th pct</span><span>population of Claude Code developers</span><span>100th pct</span></div>
+        <div class="track-axis"><span id="axisLeft"></span><span>log scale · Anthropic Claude Code $/active-day</span><span id="axisRight"></span></div>
       </div>
+      <div class="hero-source" id="heroSource"></div>
     </div>
   </div>
 
@@ -183,29 +189,40 @@ document.getElementById('kpiStrip').innerHTML = kpis
 // ---- Percentile hero ----
 const cad = P.cost_per_active_day;
 const pctNum = Math.min(cad.percentile, 99.9);
-document.getElementById('pctNum').innerHTML = (pctNum >= 99 ? 'Top ' + (100 - pctNum).toFixed(1) : pctNum.toFixed(0) + 'th') + '<small>' + (pctNum >= 99 ? '%' : ' pct') + '</small>';
-document.getElementById('bandLbl').textContent = cad.band;
+const isTop = pctNum >= 99;
+document.getElementById('pctEyebrow').textContent = isTop ? 'Top' : 'Percentile';
+document.getElementById('pctNum').innerHTML = isTop
+  ? (100 - pctNum).toFixed(1) + '<span class="pct-unit">%</span>'
+  : pctNum.toFixed(0) + '<span class="pct-unit">th</span>';
+document.getElementById('bandLbl').textContent = cad.band + ' tier';
+const md = D.metadata;
+const originTag = md.benchmark_source_origin === 'live' ? 'live' : (md.benchmark_source_origin || '').indexOf('cache') >= 0 ? 'cached' : 'seed';
+document.getElementById('heroSource').innerHTML =
+  `Benchmark · <a href="${md.benchmark_source_url}" target="_blank" rel="noopener">${md.benchmark_source_label}</a> — avg $${cad.mean_benchmark}/active-day, 90% &lt; $${cad.p90_benchmark}/day · fetched ${md.benchmark_retrieved}<span class="src-tag">${originTag}</span>`;
 const xMean = P.monthly_cost.x_vs_mean;
 document.getElementById('heroLede').innerHTML =
   `You spend <strong>${usd2(cad.value)}/active day</strong> of API-equivalent value on Claude Code — against an Anthropic-published average of <strong>${usd(cad.mean_benchmark)}</strong> and a 90th-percentile of <strong>${usd(cad.p90_benchmark)}</strong>. ` +
   `That is <em>${xMean}×</em> the typical developer's monthly spend. You sit in the <strong>${cad.band.toLowerCase()}</strong> tier.`;
 
 const bp = B.cost_per_active_day_usd;
-const pctOf = (x) => 0.5 * (1 + erf((Math.log(x) - bp.mu) / (bp.sigma * Math.SQRT2)));
-function erf(x){ const t=1/(1+0.3275911*Math.abs(x)); const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x); return x>=0?y:-y; }
+const DMIN = 2;
+const DMAX = Math.max(200, Math.ceil(cad.value * 1.35 / 50) * 50);
+const logPos = (x) => Math.max(0.4, Math.min(99.6, Math.log(x / DMIN) / Math.log(DMAX / DMIN) * 100));
+const medianV = Math.round(bp.median_implied);
 const track = document.getElementById('track');
-const marks = [
-  [pctOf(bp.median_implied)*100, 'Median', usd(bp.median_implied)+'/d'],
-  [pctOf(bp.mean)*100, 'Average', usd(bp.mean)+'/d'],
-  [90, '90th pct', usd(bp.p90)+'/d'],
-];
-marks.forEach(([pos, cap, val]) => {
-  const el = document.createElement('div'); el.className = 'tick'; el.style.left = pos + '%';
-  el.innerHTML = `<div class="cap">${cap}<b>${val}</b></div>`; track.appendChild(el);
+[[medianV, 'Median'], [bp.mean, 'Average'], [bp.p90, '90th pct']].forEach(([val, cap]) => {
+  const el = document.createElement('div'); el.className = 'tick'; el.style.left = logPos(val) + '%';
+  el.innerHTML = `<div class="cap">${cap}<b>$${val}/d</b></div>`; track.appendChild(el);
 });
-const you = document.createElement('div'); you.className = 'you'; you.style.left = Math.min(pctNum, 99.3) + '%';
-you.innerHTML = `<div class="pin"></div><div class="lbl">YOU · ${usd2(cad.value)}/d</div>`;
-track.appendChild(you);
+const youDot = document.createElement('div');
+youDot.style.cssText = `position:absolute; left:${logPos(cad.value)}%; top:6px; width:13px; height:13px; margin:-6.5px 0 0 -6.5px; border-radius:50%; background:var(--stamp); border:2px solid var(--dark); box-shadow:0 0 0 2px var(--stamp); z-index:3;`;
+track.appendChild(youDot);
+const youLbl = document.createElement('div');
+youLbl.style.cssText = `position:absolute; left:${logPos(cad.value)}%; bottom:21px; transform:translateX(-100%); padding-right:12px; color:#e0796f; font-family:var(--font-mono); font-size:0.63rem; font-weight:600; white-space:nowrap; letter-spacing:0.03em;`;
+youLbl.textContent = `YOU · ${usd2(cad.value)}/d`;
+track.appendChild(youLbl);
+document.getElementById('axisLeft').textContent = '$' + DMIN + '/d';
+document.getElementById('axisRight').textContent = '$' + DMAX + '/d';
 
 // ---- Charts ----
 Chart.defaults.color = '#b3a78f';

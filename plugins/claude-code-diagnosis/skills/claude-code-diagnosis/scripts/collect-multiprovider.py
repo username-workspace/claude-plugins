@@ -1,12 +1,34 @@
 #!/usr/bin/env python3
-import json, os, sys, subprocess
+import json, os, sys, subprocess, math
 from collections import defaultdict
+from datetime import date
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BENCH_PATH = os.path.join(HERE, "..", "assets", "benchmarks.json")
 
 PROVIDERS = {
     "Anthropic": ("#a8231f", ("claude", "opus", "sonnet", "haiku")),
     "OpenAI": ("#3d5a7f", ("gpt", "codex", "o1-", "o3-", "o4-")),
     "Google": ("#9a7b4a", ("gemini", "gemma")),
 }
+
+
+def norm_percentile(x, mu, sigma):
+    if x <= 0:
+        return 0.0
+    return 0.5 * (1 + math.erf((math.log(x) - mu) / (sigma * math.sqrt(2))))
+
+
+def band(p):
+    if p < 0.25:
+        return "Light user"
+    if p < 0.75:
+        return "Typical"
+    if p < 0.90:
+        return "Heavy user"
+    if p < 0.99:
+        return "Power user"
+    return "Top 1%"
 
 
 def provider_of(model):
@@ -76,6 +98,32 @@ def main():
     total = sum(p_cost.values()) or 1.0
     months_sorted = sorted(months)
     prov_sorted = sorted(p_cost, key=lambda k: -p_cost[k])
+    n_active = len(set(days)) or 1
+
+    sys.path.insert(0, HERE)
+    import benchmark
+    bench = benchmark.load(BENCH_PATH)
+    cad = bench["cost_per_active_day_usd"]
+
+    span_days = (date.fromisoformat(max(days)) - date.fromisoformat(min(days))).days + 1 if days else 1
+    months = max(span_days / 30.4375, 0.0001)
+    month_mean = bench["cost_per_month_usd"]["mean"]
+
+    def placement(cost):
+        v = cost / n_active
+        pct = norm_percentile(v, cad["mu"], cad["sigma"])
+        monthly = cost / months
+        return {"per_active_day": round(v, 2), "percentile": round(100 * pct, 1), "band": band(pct),
+                "monthly": round(monthly), "x_vs_mean": round(monthly / month_mean, 1)}
+
+    percentile = {
+        "benchmark": {"mean": cad["mean"], "p90": cad["p90"], "median": cad["median_implied"],
+                      "mu": cad["mu"], "sigma": cad["sigma"], "source": bench["source"],
+                      "source_label": bench.get("source_label"), "source_url": bench.get("source_url"),
+                      "source_origin": bench.get("source_origin"), "retrieved": bench.get("retrieved")},
+        "total": placement(total),
+        "anthropic": placement(p_cost.get("Anthropic", 0)),
+    }
 
     providers = [
         {
@@ -102,7 +150,7 @@ def main():
 
     out = {
         "metadata": {
-            "source": "ccusage (all detected coding agents)",
+            "source": "ccusage",
             "first_day": min(days) if days else None,
             "last_day": max(days) if days else None,
             "active_days": len(set(days)),
@@ -114,6 +162,7 @@ def main():
             "providers": len(providers),
             "anthropic_share_pct": round(100 * p_cost.get("Anthropic", 0) / total, 1),
         },
+        "percentile": percentile,
         "providers": providers,
         "monthly": {
             "months": months_sorted,

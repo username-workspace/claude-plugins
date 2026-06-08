@@ -5,11 +5,12 @@ from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH_PATH = os.path.join(HERE, "..", "assets", "benchmarks.json")
+sys.path.insert(0, HERE)
+import benchmark
 
 
 def load_benchmarks():
-    with open(BENCH_PATH) as f:
-        return json.load(f)
+    return benchmark.load(BENCH_PATH)
 
 
 def projects_dir(argv):
@@ -321,6 +322,9 @@ def main():
             "active_days": n_active,
             "pricing_note": bench["pricing_note"],
             "benchmark_source": bench["source"],
+            "benchmark_source_label": bench.get("source_label"),
+            "benchmark_source_url": bench.get("source_url"),
+            "benchmark_source_origin": bench.get("source_origin"),
             "benchmark_retrieved": bench["retrieved"],
         },
         "totals": {

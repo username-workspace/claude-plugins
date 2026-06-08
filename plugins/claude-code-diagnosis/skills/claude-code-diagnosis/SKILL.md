@@ -40,6 +40,20 @@ Concise markdown: headline (cost, cost/active-day, percentile band), model mix, 
 (top projects), engagement signals (cache hit, thinking %, subagent %, tools/turn), and the
 benchmark read with caveats below.
 
+## Multi-provider mode (optional)
+
+For a cross-agent view (Claude Code **+** Codex, Gemini CLI, …), use `ccusage` as the authoritative
+per-token source instead of re-parsing each agent's directory:
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/claude-code-diagnosis/scripts/collect-multiprovider.py" [ccusage-daily.json] > /tmp/cc-multi-data.json
+```
+With no argument it runs `npx ccusage@latest daily --json`; pass a pre-saved ccusage JSON to skip the
+network call. It attributes every `modelBreakdown` to a provider (Anthropic / OpenAI / Google / Other)
+by model name and emits per-provider cost, token and monthly-trend series. Build with
+`assets/report-multiprovider-template.html` (inject as `window.MDATA`, write to
+`~/ai-coding-spend-multiprovider.html`). Answers "what's my total AI-coding spend and how is it split
+across providers" — the Claude-only diagnosis stays the primary, deeper view.
+
 ## What it measures
 
 | Metric | How | Read as |
@@ -56,11 +70,15 @@ benchmark read with caveats below.
 
 ## Benchmark methodology
 
-Anchored on two **officially published** Anthropic figures (`code.claude.com/docs/en/costs`, April 2026):
-the average **$13 per developer per active day** and **90% of users below $30/active-day**. The
-percentile curve is a **lognormal fitted to those two points** (implied median ≈ $7/active-day), so
-mid-range percentiles are modelled, not measured. Constants live in `assets/benchmarks.json` — update
-that file (and `retrieved` date) when Anthropic revises its figures; the report reads it at build time.
+Anchored on two **officially published** Anthropic figures (`code.claude.com/docs/en/costs`): the
+average **$13 per developer per active day** and **90% of users below $30/active-day**. `scripts/benchmark.py`
+**fetches these live on every run** (stdlib `urllib`, no API key) and **caches them for 24h** in
+`~/.cache/claude-code-diagnosis/benchmark.json`; on a network failure it falls back to the stale cache,
+then to the committed seed in `assets/benchmarks.json` — so the skill never blocks. From the two anchors
+it **fits a lognormal** (`fit_lognormal`, implied median ≈ $6/active-day) and recomputes μ/σ whenever
+Anthropic changes the numbers, so mid-range percentiles are modelled, not measured. The fetched figures,
+source URL and origin (`live`/`cached`/`seed`) are surfaced in the report's hero citation. `benchmarks.json`
+remains the seed and holds the (separately-sourced) pricing table.
 
 ## Caveats to flag
 
