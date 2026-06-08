@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-diagnosis",
+  "version": "1.0.0",
+  "description": "Diagnose your own Claude Code usage and benchmark it against Anthropic's published per-developer figures. Parses local transcripts into cost, tokens, sessions, model mix, tool distribution, cache efficiency, thinking and subagent rates, per-project and per-week breakdowns, and renders an interactive HTML dashboard with a percentile placement. Cost reconciles to within ~1% of ccusage. No network, no account access.",
+  "author": {
+    "name": "Username",
+    "email": "admin@username.digital"
+  },
+  "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/claude-code-diagnosis",
+  "repository": "https://github.com/username-workspace/skills",
+  "license": "MIT"
+}

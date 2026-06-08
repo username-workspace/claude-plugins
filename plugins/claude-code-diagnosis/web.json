@@ -1,0 +1,13 @@
+{
+  "category": "DevOps",
+  "tagline": "See your Claude Code usage — and where you rank against other developers.",
+  "summary": "Parses your local Claude Code transcripts (~/.claude/projects) into an interactive HTML dashboard: API-equivalent cost, tokens, sessions, model mix, tool distribution, cache efficiency, thinking and subagent rates, per-project and per-week breakdowns — plus a percentile placement against Anthropic's published per-developer figures. Cost reconciles to within ~1% of ccusage. No network, no account access.",
+  "capabilities": [
+    "Deduplicates token/cost by message.id (counts each turn once, not once per content block)",
+    "Local cost estimate at Anthropic list prices, version-aware (Opus 4.5+ at the reduced tier)",
+    "Percentile placement via a lognormal fitted to Anthropic's published cost/active-day anchors",
+    "Per-project, per-model, per-tool, per-hour and per-week breakdowns from one transcript pass"
+  ],
+  "commands": ["collect-usage"],
+  "platforms": ["macOS", "Linux"]
+}

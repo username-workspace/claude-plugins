@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Coding Spend — All Providers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&display=swap');
+:root {
+  --dark: #0c0d10; --on-dark: #fafafa; --stamp: #a8231f; --blueprint: #3d5a7f;
+  --ink-muted: #c9c3ba; --ink-faint: #8f8c86; --cream-muted: #b3a78f;
+  --hairline: rgba(255,255,255,0.14); --hairline-faint: rgba(255,255,255,0.07);
+  --surface: rgba(255,255,255,0.025);
+  --font-display: 'Newsreader', Georgia, serif;
+  --font-body: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --bp-line: rgba(255,255,255,0.04); --bp-cell: 40px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body { font-family: var(--font-body); color: var(--on-dark); padding: 48px 40px; min-height: 100vh;
+  background:
+    radial-gradient(900px 520px at 88% -8%, rgba(168,35,31,0.16), transparent 60%),
+    radial-gradient(800px 520px at -5% 4%, rgba(61,90,127,0.18), transparent 55%),
+    linear-gradient(var(--bp-line) 1px, transparent 1px) 0 0 / var(--bp-cell) var(--bp-cell),
+    linear-gradient(90deg, var(--bp-line) 1px, transparent 1px) 0 0 / var(--bp-cell) var(--bp-cell),
+    var(--dark); }
+.wrap { max-width: 1280px; margin: 0 auto; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); display: inline-flex; align-items: center; gap: 10px; }
+.eyebrow::before { content: ''; width: 22px; height: 2px; background: var(--stamp); display: inline-block; }
+h1 { font-family: var(--font-display); font-weight: 500; font-size: 2.6rem; line-height: 1.04; letter-spacing: -0.025em; margin: 14px 0 6px; }
+h1 em { font-style: italic; color: var(--stamp); }
+.subtitle { font-family: var(--font-mono); color: var(--ink-faint); font-size: 0.72rem; letter-spacing: 0.04em; margin-bottom: 40px; }
+.kpi-strip { display: flex; flex-wrap: wrap; gap: 0; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 24px 0; margin-bottom: 40px; }
+.kpi { padding: 2px 32px; border-left: 1px solid var(--hairline-faint); flex: 1; min-width: 150px; }
+.kpi:first-child { padding-left: 0; border-left: none; }
+.kpi .value { font-family: var(--font-display); font-weight: 600; font-size: 2.3rem; line-height: 1; letter-spacing: -0.01em; }
+.kpi.lead .value { color: var(--stamp); }
+.kpi .label { font-family: var(--font-mono); font-size: 0.62rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin-top: 12px; }
+.kpi .sub { font-family: var(--font-mono); font-size: 0.6rem; color: var(--ink-faint); opacity: 0.8; margin-top: 5px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 22px; }
+.card { position: relative; background: var(--surface); padding: 26px; --t: 14px; --tc: var(--hairline); --tw: 1.5px;
+  background-image:
+    linear-gradient(var(--surface), var(--surface)),
+    linear-gradient(var(--tc),var(--tc)),linear-gradient(var(--tc),var(--tc)),linear-gradient(var(--tc),var(--tc)),linear-gradient(var(--tc),var(--tc)),
+    linear-gradient(var(--tc),var(--tc)),linear-gradient(var(--tc),var(--tc)),linear-gradient(var(--tc),var(--tc)),linear-gradient(var(--tc),var(--tc));
+  background-repeat: no-repeat;
+  background-size: 100% 100%, var(--t) var(--tw),var(--tw) var(--t), var(--t) var(--tw),var(--tw) var(--t), var(--t) var(--tw),var(--tw) var(--t), var(--t) var(--tw),var(--tw) var(--t);
+  background-position: 0 0, top left,top left, top right,top right, bottom left,bottom left, bottom right,bottom right; }
+.card.full { grid-column: 1 / -1; }
+.card h2 { font-family: var(--font-mono); font-weight: 600; margin-bottom: 18px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.68rem; }
+.chart-container { position: relative; height: 320px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+th { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--hairline); color: var(--ink-faint); font-family: var(--font-mono); font-weight: 500; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; }
+th.right, td.right { text-align: right; }
+td { padding: 11px 12px; border-bottom: 1px solid var(--hairline-faint); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+.name-cell { display: flex; align-items: center; gap: 10px; font-family: var(--font-body); }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.bar-cell { position: relative; }
+.bar-cell .fill { position: absolute; left: 0; top: 0; bottom: 0; z-index: 0; opacity: 0.22; }
+.bar-cell span { position: relative; z-index: 1; }
+.fineprint { font-family: var(--font-mono); font-size: 0.62rem; line-height: 1.7; color: var(--ink-faint); letter-spacing: 0.01em; margin-top: 14px; }
+.fineprint code { color: var(--ink-muted); }
+.share-bar { display: flex; height: 30px; border-radius: 3px; overflow: hidden; margin-bottom: 26px; }
+.share-bar span { display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.62rem; font-weight: 600; color: #fff; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">AI Coding · Multi-Provider</p>
+<h1>AI coding spend — <em>all providers</em></h1>
+<p class="subtitle" id="subtitle"></p>
+
+<div class="kpi-strip" id="kpiStrip"></div>
+<div class="share-bar" id="shareBar"></div>
+
+<div class="grid">
+  <div class="card full"><h2>Spend by provider / month</h2><div class="chart-container"><canvas id="trendChart"></canvas></div></div>
+  <div class="card"><h2>Total spend share</h2><div class="chart-container"><canvas id="provChart"></canvas></div></div>
+  <div class="card">
+    <h2>Providers</h2>
+    <table><thead><tr><th>Provider</th><th class="right">Spend</th><th class="right">Share</th><th class="right">Tokens</th></tr></thead><tbody id="provBody"></tbody></table>
+  </div>
+  <div class="card full">
+    <h2>Top models across providers</h2>
+    <table><thead><tr><th>Model</th><th>Provider</th><th class="right">Spend</th><th class="right">Share</th></tr></thead><tbody id="modelBody"></tbody></table>
+    <p class="fineprint" id="note"></p>
+  </div>
+</div>
+</div>
+
+<script>
+const D = window.MDATA;
+const usd = (n) => '$' + Math.round(n).toLocaleString('en-US');
+const compact = (n) => n >= 1e9 ? (n/1e9).toFixed(1)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(0)+'k' : ''+n;
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const colorOf = (p) => (D.providers.find(x => x.name === p) || {}).color || '#b3a78f';
+
+document.getElementById('subtitle').textContent =
+  `${D.metadata.first_day} → ${D.metadata.last_day} · ${D.metadata.active_days} active days · source: ${D.metadata.source}`;
+
+const oai = D.providers.find(p => p.name === 'OpenAI') || {cost:0};
+const kpis = [
+  [usd(D.totals.cost), 'Total AI coding spend', `${D.totals.providers} providers · ${compact(D.totals.tokens)} tokens`, true],
+  [D.totals.anthropic_share_pct + '%', 'Anthropic share', 'Claude Code', false],
+  [usd(oai.cost), 'OpenAI / Codex', `${oai.share_pct||0}% of spend`, false],
+  [(D.by_model[0]||{}).model || '—', 'Top model', usd((D.by_model[0]||{}).cost||0), false],
+];
+document.getElementById('kpiStrip').innerHTML = kpis
+  .map(([v,l,s,lead]) => `<div class="kpi${lead?' lead':''}"><div class="value">${v}</div><div class="label">${l}</div><div class="sub">${s||''}</div></div>`).join('');
+
+document.getElementById('shareBar').innerHTML = D.providers
+  .filter(p => p.share_pct >= 1)
+  .map(p => `<span style="width:${p.share_pct}%; background:${p.color}">${p.name} ${p.share_pct}%</span>`).join('');
+
+Chart.defaults.color = '#b3a78f';
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 11;
+const fade = (hex, a) => { const n = parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; };
+const monthLabels = D.monthly.months.map(m => { const [y,mo] = m.split('-'); return MONTHS[+mo-1] + " '" + y.slice(2); });
+
+new Chart(document.getElementById('trendChart'), {
+  type: 'line',
+  data: { labels: monthLabels, datasets: D.providers.map(p => ({
+    label: p.name, data: D.monthly.cost[p.name], borderColor: p.color, backgroundColor: fade(p.color, 0.30),
+    borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true })) },
+  options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, padding: 14 } },
+      tooltip: { callbacks: { label: c => `${c.dataset.label}: ${usd(c.raw)}` } } },
+    scales: { x: { stacked: true, grid: { color: 'rgba(255,255,255,0.05)', drawTicks: false }, ticks: { color: '#cdc7bd', padding: 8 } },
+      y: { stacked: true, grid: { color: 'rgba(255,255,255,0.05)', drawTicks: false }, ticks: { color: '#9a948b', padding: 8, callback: v => '$'+v }, beginAtZero: true } } }
+});
+
+new Chart(document.getElementById('provChart'), {
+  type: 'doughnut',
+  data: { labels: D.providers.map(p => p.name), datasets: [{ data: D.providers.map(p => p.cost), backgroundColor: D.providers.map(p => p.color), borderColor: '#0c0d10', borderWidth: 2 }] },
+  options: { responsive: true, maintainAspectRatio: false, cutout: '58%',
+    plugins: { legend: { position: 'right', labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, padding: 12 } },
+      tooltip: { callbacks: { label: c => `${c.label}: ${usd(c.raw)} (${D.providers[c.dataIndex].share_pct}%)` } } } }
+});
+
+document.getElementById('provBody').innerHTML = D.providers.map(p => `
+  <tr><td><div class="name-cell"><span class="dot" style="background:${p.color}"></span>${p.name}</div></td>
+    <td class="right"><strong>${usd(p.cost)}</strong></td><td class="right">${p.share_pct}%</td><td class="right">${compact(p.tokens)}</td></tr>`).join('');
+
+const maxC = Math.max(...D.by_model.map(m => m.cost), 1);
+document.getElementById('modelBody').innerHTML = D.by_model.map(m => `
+  <tr><td><div class="name-cell"><span class="dot" style="background:${m.color}"></span>${m.model}</div></td>
+    <td style="color:var(--ink-faint)">${m.provider}</td>
+    <td class="right bar-cell"><div class="fill" style="width:${(m.cost/maxC*100).toFixed(0)}%; background:${m.color}"></div><span>${usd(m.cost)}</span></td>
+    <td class="right">${m.share_pct}%</td></tr>`).join('');
+
+document.getElementById('note').innerHTML =
+  `Source: <code>${D.metadata.source}</code> — authoritative per-token cost across every coding agent ccusage detects (Claude Code, Codex, Gemini CLI, …). Providers are attributed by model name. Figures are API-equivalent value at list prices; subscription usage is included in the plan and not billed per token. Token totals include cache reads, which dominate cached workloads.`;
+</script>
+</body>
+</html>

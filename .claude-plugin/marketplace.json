@@ -32,6 +32,14 @@
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/delivery-metrics"
     },
     {
+      "name": "claude-code-diagnosis",
+      "version": "1.0.0",
+      "source": "./plugins/claude-code-diagnosis",
+      "description": "Diagnose your own Claude Code usage and benchmark it against Anthropic's published per-developer figures — an interactive HTML dashboard of cost, tokens, model mix, tool use, cache efficiency, per-project breakdown and a percentile placement. Cost reconciles within ~1% of ccusage. No network, no account access.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/claude-code-diagnosis"
+    },
+    {
       "name": "find-session",
       "version": "1.0.0",
       "source": "./plugins/find-session",
