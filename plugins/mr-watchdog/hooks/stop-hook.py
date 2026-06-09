@@ -14,11 +14,18 @@ def main():
     cwd = payload.get("cwd") or os.getcwd()
     root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     script = os.path.join(root, "skills", "mr-watchdog", "scripts", "watch.py")
-    for cmd in ("announce", "start"):
-        try:
-            subprocess.run([sys.executable, script, cmd, "--repo", cwd], timeout=30)
-        except Exception:
-            pass
+    # (re)launch the background watcher — output suppressed so it can't corrupt the decision below
+    try:
+        subprocess.run([sys.executable, script, "start", "--repo", cwd], timeout=30,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    # emit the handoff: a `block` decision to continue this (subscription) session into a fix, or a
+    # plain notice. Its stdout IS the hook's stdout, which Claude Code parses.
+    try:
+        subprocess.run([sys.executable, script, "hook", "--repo", cwd], timeout=30)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

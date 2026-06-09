@@ -173,4 +173,31 @@ grep -Eq "['\"]merge['\"]" "$WATCH" && ko "10. never merges (no merge command)" 
 grep -Eq 'git[^\n]*(commit|push)|"-A"|reset[^\n]*hard|checkout[^\n]*--' "$WATCH" && ko "10. read-only: no git mutation in the watcher" || ok "10. read-only: never commits, pushes, or mutates the tree"
 grep -q 'claude' "$WATCH" && ko "10. no model invocation (no headless billing)" || ok "10. runs no model itself (no 'claude' anywhere — zero headless billing)"
 
+# 11. hook decision: red + on_red=fix (default) → a `block` that continues the live session to fix
+d="$ROOT/h"; new_repo "$d"
+printf '{"state":"needs-fix","branch":"feat","log":"BOOM app.py:7","announced":false}' > "$d/.git/mr-watchdog-status.json"
+out=$(python3 "$WATCH" hook --repo "$d")
+assert_contains '"decision": "block"' "$out" "11. on_red=fix (default) → emits a block decision"
+assert_contains 'ROOT CAUSE' "$out" "11. block reason: fix the root cause"
+assert_contains 'BOOM app.py:7' "$out" "11. block reason carries the failing log"
+assert_contains 'verify' "$out" "11. block reason points to verify before commit"
+assert_eq "" "$(python3 "$WATCH" hook --repo "$d")" "11. handled once (announced) → silent next time"
+printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"
+printf '{"on_red":"notify"}' > "$d/.mr-watchdog.json"
+out=$(python3 "$WATCH" hook --repo "$d")
+assert_absent '"decision"' "$out" "11. on_red=notify → NO block decision (passive)"
+assert_contains 'CAUSE RACINE' "$out" "11. on_red=notify → surfaces the passive handoff"
+printf '{"state":"green","announced":false}' > "$d/.git/mr-watchdog-status.json"
+assert_contains "ok c'est bon" "$(python3 "$WATCH" hook --repo "$d")" "11. green → ok c'est bon"
+
+# 12. Stop-hook plumbing: emits the block decision; re-entrancy guard (stop_hook_active) silences it
+HOOK="$(cd "$(dirname "$WATCH")/../../.." && pwd)/hooks/stop-hook.py"
+d="$ROOT/sh"; new_repo "$d"   # MR is CLOSED in these calls so the hook's `start` spawns no daemon
+printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"
+out=$(echo "{\"cwd\":\"$d\",\"stop_hook_active\":false}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
+assert_contains '"decision": "block"' "$out" "12. Stop hook surfaces the block decision"
+printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"
+out=$(echo "{\"cwd\":\"$d\",\"stop_hook_active\":true}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
+assert_eq "" "$out" "12. re-entrancy: stop_hook_active → hook silent (no infinite block loop)"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

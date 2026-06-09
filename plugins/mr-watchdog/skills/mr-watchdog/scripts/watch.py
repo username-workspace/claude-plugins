@@ -13,6 +13,7 @@ DEFAULTS = {
     "forge": None,            # github | gitlab; auto-detected from the remote if null
     "poll_interval": 30,      # seconds between CI polls
     "log_lines": 200,         # failing-log lines carried into the handoff
+    "on_red": "fix",          # fix (continue your live session to fix it) | notify (just surface it)
     "notify": "status-file",  # status-file | desktop
     "skip_marker": "wip/",
 }
@@ -473,24 +474,57 @@ def cmd_status(args):
     print(json.dumps(read_status(repo) or {"state": "none"}, indent=2))
 
 
+def handoff_message(st):
+    log = (st.get("log") or "")[-4000:]
+    return (f"[mr-watchdog] ⚠ CI rouge sur '{st.get('branch')}'. Corrige la CAUSE RACINE — pas de "
+            f"contournement (ne désactive/supprime/affaiblis aucun test, pas de --no-verify, || true, "
+            f"seuils baissés…). Puis `watch.py verify` avant de committer. Log du job en échec :\n" + log)
+
+
+def fix_instruction(repo, st):
+    log = (st.get("log") or "")[-4000:]
+    verify = f"python3 {os.path.abspath(__file__)} verify --repo {repo}"
+    return ("The CI pipeline for merge-request branch '" + str(st.get("branch")) + "' is failing. Fix "
+            "the ROOT CAUSE of the failure now. Do NOT fake green: never disable, skip, delete, or "
+            "weaken a test; no --no-verify, no `|| true`, no continue-on-error/allow_failure, no "
+            "lowered coverage or thresholds. Make the minimal correct change. Then run `" + verify +
+            "` and only commit/push if it passes. If the only way to make it pass is a workaround, "
+            "STOP and explain instead. Failing job log:\n" + log)
+
+
 def cmd_announce(args):
     repo = os.path.abspath(args.repo)
     st = read_status(repo)
     if not st or st.get("announced") or st.get("state") == "watching":
         return
     if st.get("state") == "needs-fix":
-        print(f"[mr-watchdog] ⚠ CI rouge sur '{st.get('branch')}'. Corrige la CAUSE RACINE — pas de "
-              f"contournement (ne désactive/supprime/affaiblis aucun test, pas de --no-verify, || true, "
-              f"seuils baissés…). Puis `watch.py verify` avant de committer. Log du job en échec :")
-        log = st.get("log", "")
-        if log:
-            print(log[-4000:])
+        print(handoff_message(st))
     else:
         msg = {"green": "ok c'est bon — CI au vert",
                "stopped": f"arrêt : {st.get('reason') or ''}"}.get(st.get("state"))
         if msg:
             print(f"[mr-watchdog] {msg}")
     write_status(repo, announced=True)
+
+
+def cmd_hook(args):
+    """The Stop hook's mouthpiece: on a fresh red handoff, either continue the live session to fix it
+    (on_red=fix → emit a block decision) or just surface it (on_red=notify). Marks it handled."""
+    repo = os.path.abspath(args.repo)
+    cfg = load_config(repo, args.config)
+    st = read_status(repo)
+    if not st or st.get("announced") or st.get("state") == "watching":
+        return
+    state = st.get("state")
+    if state == "needs-fix":
+        write_status(repo, announced=True)
+        if cfg.get("on_red", "fix") == "fix":
+            print(json.dumps({"decision": "block", "reason": fix_instruction(repo, st)}))
+        else:
+            print(handoff_message(st))
+    elif state == "green":
+        write_status(repo, announced=True)
+        print("[mr-watchdog] ok c'est bon — CI au vert")
 
 
 def cmd_verify(args):
@@ -513,7 +547,8 @@ def main():
     ap = argparse.ArgumentParser(description="mr-watchdog")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("start", cmd_start), ("_run", cmd_run), ("stop", cmd_stop), ("reset", cmd_reset),
-                     ("status", cmd_status), ("announce", cmd_announce), ("verify", cmd_verify), ("tick", cmd_tick)):
+                     ("status", cmd_status), ("announce", cmd_announce), ("hook", cmd_hook),
+                     ("verify", cmd_verify), ("tick", cmd_tick)):
         s = sub.add_parser(name)
         s.add_argument("--repo", default=".")
         s.add_argument("--config")
