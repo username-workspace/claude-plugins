@@ -6,9 +6,10 @@ description: >-
   checklist derived from the initiating goal is satisfied AND the project's quality gate is actually
   green. Forge-agnostic (GitHub, GitLab, Bitbucket): uses gh/glab if present, else GitLab push
   options, else surfaces the PR-creation URL — no CLI dependency. Branch-first; never commits or
-  pushes the default branch; never merges; no AI attribution. Opt-in per repo. Use when you want the
-  agent to commit/push/open-PR on its own instead of being asked each time. Horizontal: any repo with
-  a remote and a detectable gate.
+  pushes the default branch; never merges; no AI attribution. Engages on its own only on work THIS
+  session produced (never a pre-existing dirty tree); opt out per repo. Use when you want the agent to
+  commit/push/open-PR on its own instead of being asked each time. Horizontal: any repo with a remote
+  and a detectable gate.
 ---
 
 # ship-when-done
@@ -19,9 +20,12 @@ agent does — gated on **real signals**, not the model's self-confidence.
 ## How it fires
 
 It registers a **`Stop` hook** (end of an agent turn — `hooks/hooks.json` → `hooks/stop-hook.py` →
-`scripts/ship.py engage`). It is **opt-in per repo**: it stays completely silent unless the repo has a
-`.ship-when-done.json` file **or** `SHIP_WHEN_DONE=1` is set — it never auto-mutates a random repo.
-When engaged, it acts only if there is work in flight (uncommitted changes or unshipped commits).
+`scripts/ship.py engage`). It **engages itself** — no opt-in file, no env var. A companion
+`UserPromptSubmit` hook stamps HEAD + the dirty set at the start of each turn; it acts **only if THIS
+session produced the work** (HEAD advanced or the tree changed since that baseline), so it never
+sweeps up a **pre-existing dirty tree** you didn't touch, or auto-mutates a repo you're just visiting.
+Opt a repo **out** with `{ "enabled": false }` in `.ship-when-done.json`. When engaged, it still acts
+only if there is work in flight (uncommitted changes or unshipped commits).
 
 ## The autonomy ladder
 
@@ -70,15 +74,14 @@ To plug an independent judge, set `judge_command` (your own command) — off by 
 - **No AI attribution** in commit messages.
 - **`wip/` escape hatch** — a branch whose name starts with `skip_marker` is left untouched.
 
-## Enable & configure
+## Configure (optional — it engages on its own)
 
-```bash
-echo '{ "on_done": "draft-pr" }' > .ship-when-done.json   # opt this repo in
-```
-> ⚠️ `gate` and `judge_command` are shell commands run on **every** turn in an opted-in repo. Only
-> enable ship-when-done in repos you trust.
+No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
+> ⚠️ `gate` and `judge_command` are shell commands run on **every** engaged turn. Set
+> `{ "enabled": false }` in any repo where you don't want that.
 ```jsonc
 {
+  "enabled": true,              // set false to opt this repo OUT (engagement is otherwise automatic)
   "on_done": "draft-pr",        // draft-pr (default) | ready-pr | suggest
   "gate": null,                  // auto-detected (pnpm ts:check / npm test / composer test…) unless set
   "ticket_pattern": "\\b([A-Z][A-Z0-9]+-\\d+)\\b",

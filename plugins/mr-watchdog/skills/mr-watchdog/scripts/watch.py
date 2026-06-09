@@ -2,14 +2,16 @@
 """mr-watchdog — once a merge request is open, watch its remote CI in the background and, on a red
 pipeline, hand the failure off to your interactive session to fix at the root.
 
-It runs NO model of its own (no headless billing), and never commits, pushes, or merges — it polls the
-CI, fetches the failing job log, and surfaces it. The fix happens in your live (subscription) session;
-`verify` lets that session self-check its change for fake-green before committing. Opt-in per repo.
+Read-only: it polls the CI, fetches the failing job log, and surfaces it — it never commits, pushes, or
+merges, and runs no model itself. The fix happens in your interactive session; `verify` lets that
+session self-check its change for fake-green before committing. It engages only a branch this session
+pushed; opt a repo out with enabled:false.
 """
 import argparse, json, os, re, subprocess, sys
 from shutil import which
 
 DEFAULTS = {
+    "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
     "forge": None,            # github | gitlab; auto-detected from the remote if null
     "poll_interval": 30,      # seconds between CI polls
     "log_lines": 200,         # failing-log lines carried into the handoff
@@ -266,6 +268,85 @@ def read_status(repo):
         return None
 
 
+# --- session engagement: only watch a branch THIS session pushed (so its pipeline is ours) ----------
+
+def upstream_sha(repo):
+    rc, sha, _ = run(["git", "rev-parse", "@{u}"], repo)
+    return sha if rc == 0 else ""
+
+
+def feature_branch(repo, cfg):
+    """The current branch if it's one we'd ever watch (a feature branch with a remote), else None."""
+    b = current_branch(repo)
+    if not b or b.startswith(cfg["skip_marker"]) or b in COMMON_TRUNKS:
+        return None
+    remote = remote_name(repo)
+    if not remote or b == default_branch(repo, remote):
+        return None
+    return b
+
+
+def session_path(repo):
+    return os.path.join(git_dir(repo), "mr-watchdog-session.json")
+
+
+def read_session(repo):
+    try:
+        return json.load(open(session_path(repo)))
+    except Exception:
+        return None
+
+
+def write_session(repo, data):
+    try:
+        json.dump(data, open(session_path(repo), "w"))
+    except OSError:
+        pass
+
+
+def cmd_baseline(args):
+    """UserPromptSubmit: stamp the branch's pushed state at turn start, so a later push is detectable."""
+    repo = os.path.abspath(args.repo)
+    cfg = load_config(repo, args.config)
+    branch = feature_branch(repo, cfg)
+    if not branch:
+        return
+    st = read_session(repo)
+    if not st or st.get("session") != args.session:
+        st = {"session": args.session, "branches": {}}
+    if branch not in st["branches"]:
+        st["branches"][branch] = {"base": upstream_sha(repo), "engaged": False}
+        write_session(repo, st)
+
+
+def engaged(repo, cfg, session):
+    """True if THIS session is responsible for the current branch's pipeline — i.e. it pushed it (the
+    branch's @{u} advanced since this session's baseline). `enabled: false` opts a repo out."""
+    if not cfg.get("enabled", True):
+        return False
+    branch = feature_branch(repo, cfg)
+    if not branch:
+        return False
+    st = read_session(repo)
+    if not st or st.get("session") != session:
+        return False
+    entry = st["branches"].get(branch)
+    if not entry:
+        return False
+    if entry.get("engaged"):
+        return True
+    if upstream_sha(repo) != (entry.get("base") or ""):
+        entry["engaged"] = True
+        write_session(repo, st)
+        return True
+    return False
+
+
+def cmd_engaged(args):
+    repo = os.path.abspath(args.repo)
+    print("yes" if engaged(repo, load_config(repo, args.config), args.session) else "no")
+
+
 # --- fake-green detection (used by `verify`, run in your live session before committing a fix) ------
 
 def added_lines(diff):
@@ -413,7 +494,7 @@ def notify(repo, cfg, state, reason):
 def cmd_start(args):
     repo = os.path.abspath(args.repo)
     cfg = load_config(repo, args.config)
-    if not (os.path.isfile(os.path.join(repo, ".mr-watchdog.json")) or os.environ.get("MR_WATCHDOG")):
+    if not cfg.get("enabled", True):
         return
     if watcher_alive(repo):
         if args.verbose:
@@ -548,10 +629,12 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("start", cmd_start), ("_run", cmd_run), ("stop", cmd_stop), ("reset", cmd_reset),
                      ("status", cmd_status), ("announce", cmd_announce), ("hook", cmd_hook),
+                     ("baseline", cmd_baseline), ("engaged", cmd_engaged),
                      ("verify", cmd_verify), ("tick", cmd_tick)):
         s = sub.add_parser(name)
         s.add_argument("--repo", default=".")
         s.add_argument("--config")
+        s.add_argument("--session", default="")
         s.add_argument("--verbose", action="store_true")
         s.set_defaults(fn=fn)
     args = ap.parse_args()

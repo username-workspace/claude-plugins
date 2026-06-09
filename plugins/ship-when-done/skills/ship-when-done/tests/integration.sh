@@ -6,6 +6,7 @@
 set -u
 PLUGIN="$(cd "$(dirname "$0")/../../.." && pwd)"          # plugins/ship-when-done
 HOOK="$PLUGIN/hooks/stop-hook.py"
+SHIP="$PLUGIN/skills/ship-when-done/scripts/ship.py"
 ROOT="$(mktemp -d)"; GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"; PASS=0; FAIL=0
 ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
 ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
@@ -45,8 +46,9 @@ git -C "$d" config remote.origin.url https://github.com/test/repo.git  # forge d
 git -C "$d" push -q -u origin main 2>/dev/null
 git -C "$d" checkout -q -b zv-77-greeting
 printf '{"gate":"true"}' > "$d/.ship-when-done.json"
-echo "hello world" > "$d/hello.txt"            # the "agent" did this
-echo "{\"cwd\":\"$d\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
+python3 "$SHIP" baseline --repo "$d" --session itest >/dev/null    # UserPromptSubmit: turn-start baseline
+echo "hello world" > "$d/hello.txt"            # the "agent" did this (the tree now changes vs baseline)
+echo "{\"cwd\":\"$d\",\"session_id\":\"itest\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
 [ "$(git -C "$d" rev-list --count zv-77-greeting)" -eq 2 ] && ok "hook committed the agent's work" || ko "hook committed the work"
 git -C "$d.git" rev-parse --verify -q zv-77-greeting >/dev/null && ok "hook pushed the branch to the remote" || ko "hook pushed the branch"
 { grep -q 'pr create' "$GH_LOG" && grep -q -- '--draft' "$GH_LOG"; } && ok "hook opened a draft PR (gate green + todos + message)" || ko "hook opened a draft PR"
@@ -60,11 +62,11 @@ printf '{}' > "$d2/.ship-when-done.json"; echo x > "$d2/a.txt"; b=$(git -C "$d2"
 echo "{\"cwd\":\"$d2\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | SHIP_WHEN_DONE_EVAL=1 CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
 [ "$(git -C "$d2" rev-list --count feat)" -eq "$b" ] && ok "re-entrance env → hook no-op" || ko "re-entrance env → hook no-op"
 
-# 3. non-opt-in repo → hook stays silent (no .ship-when-done.json, no env)
+# 3. work but NO baseline (the session doesn't own this branch) → hook stays silent
 d3="$ROOT/repo3"; mkrepo "$d3"; git -C "$d3" checkout -q -b feat
 echo x > "$d3/a.txt"; b=$(git -C "$d3" rev-list --count feat)
-echo "{\"cwd\":\"$d3\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | env -u SHIP_WHEN_DONE CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
-[ "$(git -C "$d3" rev-list --count feat)" -eq "$b" ] && ok "non-opt-in repo → hook silent" || ko "non-opt-in repo → hook silent"
+echo "{\"cwd\":\"$d3\",\"session_id\":\"itest\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
+[ "$(git -C "$d3" rev-list --count feat)" -eq "$b" ] && ok "not engaged (no baseline) → hook silent" || ko "not engaged → hook silent"
 
 # 4. stop_hook_active set → hook bails immediately (no re-entrancy loop)
 echo "{\"cwd\":\"$d3\",\"transcript_path\":\"$tp\",\"stop_hook_active\":true}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
@@ -80,8 +82,10 @@ git -C "$d5" config remote.origin.pushurl "$d5.git"
 git -C "$d5" config remote.origin.url https://gitlab.com/test/repo.git
 git -C "$d5" push -q -u origin main 2>/dev/null
 git -C "$d5" checkout -q -b zv-77-greeting
-printf '{"gate":"true"}' > "$d5/.ship-when-done.json"; echo "hello world" > "$d5/hello.txt"
-out=$(echo "{\"cwd\":\"$d5\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | env PATH="$ROOT/realbin" CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PY" "$HOOK")
+printf '{"gate":"true"}' > "$d5/.ship-when-done.json"
+python3 "$SHIP" baseline --repo "$d5" --session itest >/dev/null
+echo "hello world" > "$d5/hello.txt"
+out=$(echo "{\"cwd\":\"$d5\",\"session_id\":\"itest\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | env PATH="$ROOT/realbin" CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PY" "$HOOK")
 [ "$(git -C "$d5" rev-list --count zv-77-greeting)" -eq 2 ] && ok "gitlab: hook committed the work" || ko "gitlab: hook committed"
 git -C "$d5.git" rev-parse --verify -q zv-77-greeting >/dev/null && ok "gitlab: hook pushed the branch" || ko "gitlab: hook pushed"
 case "$out" in *pr:gitlab-mr*) ok "gitlab: MR requested via push options (no glab)";; *) ko "gitlab: MR via push options — got [$out]";; esac

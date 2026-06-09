@@ -7,7 +7,7 @@
     "Read-only watcher — it only polls CI and reads logs; never commits, pushes, or merges",
     "On red CI (default): continues your live session to fix the root cause via the Stop-hook continuation; or on_red:notify to just be told",
     "verify: a fake-green gate your session runs before committing — blocks deleted/weakened tests, --no-verify, || true, lowered thresholds",
-    "Forge-agnostic CI (GitHub via gh, GitLab via glab); opt-in per repo; one fix-trigger per failing pipeline (re-entrancy-guarded, no loop)"
+    "Self-engaging & session-scoped: only watches a branch THIS session pushed (never a stale or someone else's MR); opt out per repo. Forge-agnostic (gh/glab); one fix-trigger per failing pipeline (no loop)"
   ],
   "commands": ["watch"],
   "platforms": ["macOS", "Linux"]

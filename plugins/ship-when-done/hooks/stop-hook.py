@@ -20,6 +20,7 @@ def main():
     if payload.get("stop_hook_active"):
         return
     cwd = payload.get("cwd") or os.getcwd()
+    session = payload.get("session_id") or ""
     goal, last, todos = "", "", None
     tp = payload.get("transcript_path")
     if tp and os.path.isfile(tp):
@@ -48,7 +49,8 @@ def main():
     todos_done = bool(todos) and all((it or {}).get("status") == "completed" for it in todos)
     root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     script = os.path.join(root, "skills", "ship-when-done", "scripts", "ship.py")
-    cmd = [sys.executable, script, "engage", "--repo", cwd, "--goal", goal, "--last-message", last]
+    cmd = [sys.executable, script, "engage", "--repo", cwd, "--goal", goal, "--last-message", last,
+           "--session", session]
     if todos_done:
         cmd.append("--todos-done")
     try:

@@ -25,8 +25,11 @@ A **`Stop` hook** (`hooks/hooks.json` → `hooks/stop-hook.py`) at end-of-turn d
 1. **(re)launches** the background watcher (idempotent — no-op if one runs already or there's no open MR),
 2. acts on the watcher's latest result — a `green` notice, or a red **handoff** (see below) — once.
 
-Opt-in per repo: silent unless the repo has a `.mr-watchdog.json` file **or** `MR_WATCHDOG=1` is set.
-The watcher is a **detached process** that survives the turn and the Claude session.
+**Engages itself** — no opt-in file, no env var. A companion `UserPromptSubmit` hook stamps the branch's
+pushed state at the start of each turn; the watcher only engages a branch **this session actually
+pushed** (its `@{u}` advanced). So a branch you merely *visit* — a stale MR, someone else's MR — is
+never touched. Opt a repo **out** with `{ "enabled": false }` in `.mr-watchdog.json`. The watcher is a
+**detached process** that survives the turn and the Claude session.
 
 ## The loop (read-only)
 
@@ -75,11 +78,10 @@ python3 scripts/watch.py verify --repo .
 
 ## Enable & configure
 
-```bash
-echo '{ "poll_interval": 30 }' > .mr-watchdog.json   # opt this repo in
-```
+No config is required — it engages on its own. Drop a `.mr-watchdog.json` only to tune it or opt out:
 ```jsonc
 {
+  "enabled": true,         // set false to opt this repo OUT (engagement is otherwise automatic)
   "on_red": "fix",         // fix (continue your live session to fix it) | notify (just surface it)
   "forge": null,           // github | gitlab — auto-detected from the remote unless set
   "poll_interval": 30,     // seconds between CI polls

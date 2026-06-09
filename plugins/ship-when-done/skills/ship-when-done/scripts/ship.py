@@ -20,6 +20,7 @@ DEFAULTS = {
     "forge": None,                    # github | gitlab | bitbucket; auto-detected from the remote if null
     "goal": "",
     "default_base": None,
+    "enabled": True,                  # set false to opt a repo OUT (engagement is otherwise automatic)
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
@@ -434,13 +435,90 @@ def cmd_ladder(args):
     print(json.dumps(run_ladder(git_state(repo), verdict, args.gate, cfg), indent=2))
 
 
+# --- session engagement: only act on work THIS session produced (not a pre-existing dirty tree) -----
+
+def cur_branch(repo):
+    rc, b, _ = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], repo)
+    return b if rc == 0 else None
+
+
+def work_state(repo):
+    """(HEAD sha, hash of the dirty set) — changes the moment this session commits or edits the tree."""
+    import hashlib
+    rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
+    _, porcelain, _ = run(["git", "status", "--porcelain"], repo)
+    return (head if rc == 0 else ""), hashlib.sha1(porcelain.encode()).hexdigest()[:12]
+
+
+def session_path(repo):
+    return os.path.join(git_dir(repo), "swd-session.json")
+
+
+def read_session(repo):
+    try:
+        return json.load(open(session_path(repo)))
+    except Exception:
+        return None
+
+
+def write_session(repo, data):
+    try:
+        json.dump(data, open(session_path(repo), "w"))
+    except OSError:
+        pass
+
+
+def cmd_baseline(args):
+    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows."""
+    repo = os.path.abspath(args.repo)
+    branch = cur_branch(repo)
+    if not branch:
+        return
+    st = read_session(repo)
+    if not st or st.get("session") != args.session:
+        st = {"session": args.session, "branches": {}}
+    if branch not in st["branches"]:
+        head, dirty = work_state(repo)
+        st["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
+        write_session(repo, st)
+
+
+def engaged(repo, cfg, session):
+    """True if THIS session produced work on the current branch — HEAD advanced or the tree changed
+    since this session's baseline. `enabled: false` opts a repo out."""
+    if not cfg.get("enabled", True):
+        return False
+    branch = cur_branch(repo)
+    if not branch:
+        return False
+    st = read_session(repo)
+    if not st or st.get("session") != session:
+        return False
+    entry = st["branches"].get(branch)
+    if not entry:
+        return False
+    if entry.get("engaged"):
+        return True
+    head, dirty = work_state(repo)
+    if head != entry.get("head") or dirty != entry.get("dirty"):
+        entry["engaged"] = True
+        write_session(repo, st)
+        return True
+    return False
+
+
+def cmd_engaged(args):
+    repo = os.path.abspath(args.repo)
+    print("yes" if engaged(repo, load_config(repo, args.config), args.session) else "no")
+
+
 def cmd_engage(args):
     if os.environ.get("SHIP_WHEN_DONE_EVAL"):
         return
     repo = os.path.abspath(args.repo)
-    if not (os.path.isfile(os.path.join(repo, ".ship-when-done.json")) or os.environ.get("SHIP_WHEN_DONE")):
-        return
     cfg = load_config(repo, args.config)
+    if not engaged(repo, cfg, args.session):
+        return
     if args.goal:
         cfg["goal"] = args.goal
     state = git_state(repo)
@@ -481,7 +559,14 @@ def main():
     e = sub.add_parser("engage")
     e.add_argument("--repo", default="."); e.add_argument("--config"); e.add_argument("--goal", default="")
     e.add_argument("--last-message", default=""); e.add_argument("--todos-done", action="store_true")
+    e.add_argument("--session", default="")
     e.set_defaults(fn=cmd_engage)
+    b = sub.add_parser("baseline")
+    b.add_argument("--repo", default="."); b.add_argument("--config"); b.add_argument("--session", default="")
+    b.set_defaults(fn=cmd_baseline)
+    g = sub.add_parser("engaged")
+    g.add_argument("--repo", default="."); g.add_argument("--config"); g.add_argument("--session", default="")
+    g.set_defaults(fn=cmd_engaged)
     m = sub.add_parser("mark-done")
     m.add_argument("--repo", default="."); m.add_argument("--summary", default=""); m.add_argument("--type", default="chore")
     m.set_defaults(fn=cmd_mark_done)

@@ -162,16 +162,25 @@ printf '{"state":"green"}' > "$d/.git/mr-watchdog-status.json"
 python3 "$WATCH" reset --repo "$d" >/dev/null
 [ ! -f "$d/.git/mr-watchdog-status.json" ] && ok "8. reset clears status" || ko "8. reset clears status"
 
-# 9. opt-in gating + start no-ops without an open MR
-d="$ROOT/o"; new_repo "$d"; rm -f "$d/.mr-watchdog.json"
-assert_eq "" "$(env -u MR_WATCHDOG python3 "$WATCH" start --repo "$d" 2>&1)" "9. no opt-in → start silent"
+# 9. engagement: a branch is watched only if THIS session pushed it (no opt-in file needed)
+d="$ROOT/eng"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session S >/dev/null
+assert_eq "no" "$(python3 "$WATCH" engaged --repo "$d" --session S)" "9. baseline, no new push → not engaged (just visiting)"
+echo z > "$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
+assert_eq "yes" "$(python3 "$WATCH" engaged --repo "$d" --session S)" "9. session pushed the branch → engaged"
+assert_eq "no" "$(python3 "$WATCH" engaged --repo "$d" --session OTHER)" "9. a different session (no baseline) → not engaged"
+printf '{"enabled":false}' > "$d/.mr-watchdog.json"
+assert_eq "no" "$(python3 "$WATCH" engaged --repo "$d" --session S)" "9. enabled:false opts the repo out"
+dm="$ROOT/em"; new_repo "$dm" github.com main
+python3 "$WATCH" baseline --repo "$dm" --session S >/dev/null
+assert_eq "no" "$(python3 "$WATCH" engaged --repo "$dm" --session S)" "9. default branch → never engaged"
 d="$ROOT/o2"; new_repo "$d"
-assert_absent 'watching' "$(STUB_MR_STATE=CLOSED python3 "$WATCH" start --repo "$d" --verbose 2>&1)" "9. opted-in but no MR → no watcher"
+assert_absent 'watching' "$(STUB_MR_STATE=CLOSED python3 "$WATCH" start --repo "$d" --verbose 2>&1)" "9. no open MR → no watcher"
 
 # 10. GUARDRAILS: the watcher is read-only — no commit / push / merge anywhere in the source
 grep -Eq "['\"]merge['\"]" "$WATCH" && ko "10. never merges (no merge command)" || ok "10. never merges (no merge command in source)"
 grep -Eq 'git[^\n]*(commit|push)|"-A"|reset[^\n]*hard|checkout[^\n]*--' "$WATCH" && ko "10. read-only: no git mutation in the watcher" || ok "10. read-only: never commits, pushes, or mutates the tree"
-grep -q 'claude' "$WATCH" && ko "10. no model invocation (no headless billing)" || ok "10. runs no model itself (no 'claude' anywhere — zero headless billing)"
+grep -q 'claude' "$WATCH" && ko "10. runs no model itself" || ok "10. runs no model itself (no 'claude' anywhere in the watcher)"
 
 # 11. hook decision: red + on_red=fix (default) → a `block` that continues the live session to fix
 d="$ROOT/h"; new_repo "$d"
@@ -190,14 +199,16 @@ assert_contains 'CAUSE RACINE' "$out" "11. on_red=notify → surfaces the passiv
 printf '{"state":"green","announced":false}' > "$d/.git/mr-watchdog-status.json"
 assert_contains "ok c'est bon" "$(python3 "$WATCH" hook --repo "$d")" "11. green → ok c'est bon"
 
-# 12. Stop-hook plumbing: emits the block decision; re-entrancy guard (stop_hook_active) silences it
+# 12. Stop-hook plumbing: gated on engagement; emits the block when engaged; re-entrancy guard
 HOOK="$(cd "$(dirname "$WATCH")/../../.." && pwd)/hooks/stop-hook.py"
-d="$ROOT/sh"; new_repo "$d"   # MR is CLOSED in these calls so the hook's `start` spawns no daemon
-printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"
-out=$(echo "{\"cwd\":\"$d\",\"stop_hook_active\":false}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
-assert_contains '"decision": "block"' "$out" "12. Stop hook surfaces the block decision"
-printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"
-out=$(echo "{\"cwd\":\"$d\",\"stop_hook_active\":true}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
+d="$ROOT/sh"; new_repo "$d"   # MR CLOSED so the hook's `start` spawns no daemon
+mkneed(){ printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"; }
+mkeng(){ printf '{"session":"X","branches":{"feat":{"engaged":true}}}' > "$d/.git/mr-watchdog-session.json"; }
+mkneed; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
+assert_eq "" "$out" "12. NOT engaged → Stop hook stays silent (a branch we didn't push)"
+mkneed; mkeng; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
+assert_contains '"decision": "block"' "$out" "12. engaged → Stop hook emits the block decision"
+mkneed; mkeng; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":true}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
 assert_eq "" "$out" "12. re-entrancy: stop_hook_active → hook silent (no infinite block loop)"
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]
