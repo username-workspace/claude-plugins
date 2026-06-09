@@ -18,11 +18,21 @@ for `--dangerously-skip-permissions`, or `CRS_HEADLESS_PERM_FLAGS` for an exact 
 
 | Subcommand | Effect |
 |---|---|
-| `spawn [name]` | Launch a **persistent, visible** session; name from context (else NATO: alpha/bravo/charlie…) |
-| `resume <id> [name] [--in-place]` | Respawn an **existing** session by id; forks a fresh drivable id by default (`--in-place` = same id) |
-| `list` | List spawned sessions (live/dead) |
+| `spawn [name] [--model M]` | Launch a **persistent, visible** session; name from context (else NATO: alpha/bravo/charlie…) |
+| `resume <id> [name] [--in-place] [--model M]` | Respawn an **existing** session by id; forks a fresh drivable id by default (`--in-place` = same id) |
+| `list` | List spawned sessions (live/dead, with the model if one was set) |
 | `stop <name>` | Stop a session (kills the PTY + claude, cleans state) |
-| `check` | Health: claude, script, perms, remoteControlAtStartup, session count |
+| `check` | Health: claude, script, perms, **available models**, remoteControlAtStartup, session count |
+
+## Choosing the model
+
+`--model` picks the model for the spawned session. It takes **any value your `claude` accepts** — an
+alias (`opus`, `sonnet`, `fable`, …) or a full id (`claude-fable-5`) — and is passed **straight to
+`claude --model`, which validates it**. Nothing is hardcoded, so new models work the day `claude` ships
+them. Omit it to use your default; `check` prints the alias list from your own `claude --help`.
+
+    driver.sh spawn reviewer --model opus
+    driver.sh resume <id> --model sonnet
 
 ## Naming
 
