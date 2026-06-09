@@ -1,5 +1,5 @@
 {
-  "category": "DevOps",
+  "category": "FinOps",
   "tagline": "See your AI coding-agent usage — and where you rank against other developers.",
   "summary": "Parses your local Claude Code transcripts (~/.claude/projects) into an interactive HTML dashboard: API-equivalent cost, tokens, sessions, model mix, tool distribution, cache efficiency, thinking and subagent rates, per-project and per-week breakdowns — placed on a log-scale percentile gauge against Anthropic's published per-developer cost figures (fetched live, cached 24h). Adds a multi-provider view of total spend across Claude Code, Codex and Gemini via ccusage. Cost reconciles to within ~1% of ccusage; no account access.",
   "capabilities": [
