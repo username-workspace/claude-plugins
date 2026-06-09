@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-hook.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -7,7 +18,7 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.py\"",
             "timeout": 60,
-            "statusMessage": "mr-watchdog: check MR CI / launch watcher…"
+            "statusMessage": "mr-watchdog: watch the MR CI / handoff…"
           }
         ]
       }

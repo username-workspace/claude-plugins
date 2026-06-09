@@ -6,6 +6,9 @@ SHIP="$(cd "$(dirname "$0")/.." && pwd)/scripts/ship.py"
 ROOT="$(mktemp -d)"
 GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"
 PASS=0; FAIL=0
+# mark a repo engaged (as if this session produced the work) so the ladder tests run; the engagement
+# DETECTION itself (baseline → work) is exercised separately in test 11b.
+arm(){ printf '{"session":"","branches":{"feat":{"engaged":true}}}' > "$1/.git/swd-session.json"; }
 
 # --- stub gh on PATH ---
 mkdir -p "$ROOT/bin"
@@ -143,14 +146,30 @@ assert_contains 'pr:exists' "$out" "10. second run sees the existing PR"
 assert_eq "$after1" "$(count "$d" HEAD)" "10. no duplicate commit"
 assert_eq "$prc1" "$(grep -c 'pr create' "$GH_LOG")" "10. no duplicate PR created"
 
-# 11. engage path — opt-in gating (config present → runs; absent → silent no-op)
-d="$ROOT/t11"; new_repo "$d"; git -C "$d" checkout -q -b feat
-echo '{}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(count "$d" HEAD)
+# 11. engage path — engaged (work this session) → runs; not engaged → silent no-op
+d="$ROOT/t11"; new_repo "$d"; git -C "$d" checkout -q -b feat; arm "$d"
+echo x > "$d/a.txt"; before=$(count "$d" HEAD)
 python3 "$SHIP" engage --repo "$d" --goal "do x" >/dev/null 2>&1
-[ "$(count "$d" HEAD)" -gt "$before" ] && ok "11. opt-in repo → engage committed" || ko "11. opt-in repo → engage committed"
+[ "$(count "$d" HEAD)" -gt "$before" ] && ok "11. engaged repo → engage committed" || ko "11. engaged repo → engage committed"
 d2="$ROOT/t11b"; new_repo "$d2"; git -C "$d2" checkout -q -b feat; echo x > "$d2/a.txt"; before=$(count "$d2" HEAD)
-env -u SHIP_WHEN_DONE python3 "$SHIP" engage --repo "$d2" --goal "do x" >/dev/null 2>&1
-assert_eq "$before" "$(count "$d2" HEAD)" "11. no opt-in → engage is a silent no-op"
+env -u SHIP_WHEN_DONE python3 "$SHIP" engage --repo "$d2" --goal "do x" --session NONE >/dev/null 2>&1
+assert_eq "$before" "$(count "$d2" HEAD)" "11. not engaged (no session ownership) → engage is a silent no-op"
+
+# 11b. engagement: only work THIS session produced engages (a pre-existing dirty tree does NOT)
+eng(){ env -u SHIP_WHEN_DONE python3 "$SHIP" engaged --repo "$1" --session "$2"; }
+d="$ROOT/t11c"; new_repo "$d"; git -C "$d" checkout -q -b feat
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S >/dev/null
+assert_eq "no" "$(eng "$d" S)" "11b. clean baseline, no work yet → not engaged"
+echo work > "$d/new.txt"
+assert_eq "yes" "$(eng "$d" S)" "11b. session edited the tree → engaged"
+d=$ROOT/t11d; new_repo "$d"; git -C "$d" checkout -q -b feat
+echo "leftover" >> "$d/README.md"                       # dirty BEFORE the session baselines
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S >/dev/null
+assert_eq "no" "$(eng "$d" S)" "11b. pre-existing dirty tree, session adds nothing → NOT engaged"
+assert_eq "no" "$(eng "$d" OTHER)" "11b. a different session → not engaged"
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S3 >/dev/null
+printf '{"enabled":false}' > "$d/.ship-when-done.json"   # this edit would engage, but enabled:false wins
+assert_eq "no" "$(eng "$d" S3)" "11b. enabled:false opts the repo out (even with fresh work)"
 
 # 12a. gate auto-detection from package.json (+ lockfile → runner)
 d="$ROOT/t12"; new_repo "$d"
@@ -159,7 +178,7 @@ g=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$SHIP")'); import ship
 assert_eq "pnpm ts:check" "$g" "12a. gate auto-detected (pnpm ts:check)"
 
 # 12b. engage, FREE eval: gate green (config) + done signal → draft PR, no model call
-d="$ROOT/t12b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+d="$ROOT/t12b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" mark-done --repo "$d" --summary "do x" >/dev/null
 python3 "$SHIP" engage --repo "$d" --goal "ZV-1 do x" >/dev/null 2>&1
@@ -167,7 +186,7 @@ python3 "$SHIP" engage --repo "$d" --goal "ZV-1 do x" >/dev/null 2>&1
 assert_contains '--draft' "$(grep 'pr create' "$GH_LOG" | tail -1)" "12b. opened as draft"
 
 # 12c. engage: red gate → commit + push, NO PR
-d="$ROOT/t12c"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+d="$ROOT/t12c"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"false"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
@@ -181,7 +200,7 @@ SHIP_WHEN_DONE_EVAL=1 python3 "$SHIP" engage --repo "$d" --goal x --last-message
 assert_eq "$before" "$(count "$d" HEAD)" "13. re-entrance guard → no-op (no nested commit)"
 
 # 14. mark-done marker drives done (no keyword, no todos) → draft PR, marker consumed
-d="$ROOT/t14"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+d="$ROOT/t14"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary "did the thing" >/dev/null
 [ -f "$d/.git/swd-done.json" ] && ok "14. mark-done wrote the marker (in .git)" || ko "14. mark-done wrote the marker"
@@ -191,13 +210,13 @@ python3 "$SHIP" engage --repo "$d" --goal "ZV-9 x" >/dev/null 2>&1   # no --last
 [ ! -f "$d/.git/swd-done.json" ] && ok "14. marker consumed after PR" || ko "14. marker consumed after PR"
 
 # 15. all-todos-complete signal drives done → draft PR
-d="$ROOT/t15"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+d="$ROOT/t15"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" engage --repo "$d" --goal x --todos-done >/dev/null 2>&1   # no marker, no keyword
 [ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "15. todos-complete → draft PR" || ko "15. todos-complete → draft PR"
 
 # 16. marker + RED gate → no PR, marker kept for next time
-d="$ROOT/t16"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+d="$ROOT/t16"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"false"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
@@ -263,7 +282,7 @@ assert_contains 'pr:check-failed' "$out" "23. gh error on pr view → not create
 assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "23. no PR created on gh failure"
 
 # 24. suggest mode keeps the marker (only opened PRs consume it)  [review M1]
-d="$ROOT/t24"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+d="$ROOT/t24"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"true","on_done":"suggest"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
@@ -342,7 +361,7 @@ while IFS= read -r line; do
 done < <(SHIP="$SHIP" "$PY" "$ROOT/forge_unit.py")
 
 # 29. url strategy (bitbucket) → surfaces the clickable URL once, never re-nags  [review F2]
-d="$ROOT/t29"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat
+d="$ROOT/t29"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary "do x" >/dev/null
 out1=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)
@@ -352,7 +371,7 @@ out2=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)   # no new work
 assert_absent 'pr-url' "$out2" "29. second engage (no new commits) does NOT re-nag"
 
 # 30. done turn makes NO new commit but the branch was pushed earlier → URL still surfaced once  [review F2 regression]
-d="$ROOT/t30"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat
+d="$ROOT/t30"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat; arm "$d"
 printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" >/dev/null 2>&1            # turn 1: commit + push, NOT done
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null

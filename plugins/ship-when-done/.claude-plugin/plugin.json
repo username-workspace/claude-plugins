@@ -1,7 +1,7 @@
 {
   "name": "ship-when-done",
-  "version": "1.0.0",
-  "description": "A Stop-hook harness that commits at each milestone, pushes the feature branch to keep work safe (mandatory when a remote exists), and opens a draft PR/MR once the work is provably done — checklist from the initiating goal satisfied AND the project's quality gate actually green. Forge-agnostic (GitHub/GitLab/Bitbucket): uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency. Never commits or pushes on the default branch, never merges. Opt-in per repo. Horizontal: any repo with a remote and a detectable gate.",
+  "version": "1.1.0",
+  "description": "A Stop-hook harness that commits at each milestone, pushes the feature branch to keep work safe (mandatory when a remote exists), and opens a draft PR/MR once the work is provably done — checklist from the initiating goal satisfied AND the project's quality gate actually green. Forge-agnostic (GitHub/GitLab/Bitbucket): uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency. Never commits or pushes on the default branch, never merges. Engages on its own only on work this session produced (never a pre-existing dirty tree); opt out per repo. Horizontal: any repo with a remote and a detectable gate.",
   "author": {
     "name": "Username",
     "email": "admin@username.digital"

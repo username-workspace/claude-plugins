@@ -53,7 +53,8 @@ Sessions should be **recognizable**, not random:
 - The session **stays alive** (a real long-running process) → it appears in `claude agents`
   and, with `"remoteControlAtStartup": true` in `~/.claude/settings.json`, in **Remote
   Control** on your phone/desktop. You drive it from there.
-- This is the opposite of `claude -p`, which runs once and exits (invisible).
+- It's a **long-running, visible** session — not a one-shot that exits immediately and leaves nothing
+  to drive.
 
 ## Resume an existing session
 
