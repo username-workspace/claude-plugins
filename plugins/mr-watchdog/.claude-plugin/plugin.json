@@ -1,0 +1,12 @@
+{
+  "name": "mr-watchdog",
+  "version": "1.0.0",
+  "description": "Triggered by an open merge request, a detached background watchdog monitors the MR's remote CI and drives it to green — on a red pipeline it fetches the failing job log, spawns a headless agent to fix the ROOT CAUSE (never a bypass: no skipped/deleted tests, no --no-verify, no || true, no lowered thresholds), commits the fix on the branch to re-trigger CI, and loops until green or a bounded attempt cap. Never merges, never touches the default branch, never force-pushes. Opt-in per repo. Forge-agnostic (GitHub via gh, GitLab via glab).",
+  "author": {
+    "name": "Username",
+    "email": "admin@username.digital"
+  },
+  "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/mr-watchdog",
+  "repository": "https://github.com/username-workspace/skills",
+  "license": "MIT"
+}
