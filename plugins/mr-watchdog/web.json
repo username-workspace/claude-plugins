@@ -1,0 +1,14 @@
+{
+  "category": "DevOps",
+  "tagline": "Open a merge request, then forget it — a background watchdog drives its CI to green, fixing failures at the root.",
+  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog runs a detached background watcher over the MR's remote CI. While you move on, it polls the pipeline; on a red check it pulls the failing job log, spawns a headless agent to fix the ROOT CAUSE, commits the fix on the branch to re-trigger CI, and loops until green — then tells you 'ok c'est bon'. It refuses to fake green: no skipped/deleted tests, no --no-verify, no || true, no continue-on-error, no lowered thresholds; if the only way out is a workaround it stops and hands back to you. Never merges, never touches the default branch, never force-pushes. Bounded fix attempts. The natural sequel to ship-when-done.",
+  "capabilities": [
+    "MR-triggered, not manual: a detached watcher starts when an open MR with live CI is detected, and survives across turns",
+    "Root-cause fixes only — a curated anti-bypass gate reverts any 'fix' that skips/deletes tests or disables a check",
+    "Forge-agnostic CI: GitHub via gh, GitLab via glab — polls status, fetches the failing job log",
+    "Hard guardrails: never merges, never commits/pushes the default branch, never force-pushes, bounded fix attempts",
+    "Opt-in per repo; surfaces 'green / blocked / exhausted' back in your session and optionally as a desktop notification"
+  ],
+  "commands": ["watch"],
+  "platforms": ["macOS", "Linux"]
+}

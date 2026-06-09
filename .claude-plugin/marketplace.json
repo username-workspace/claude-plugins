@@ -62,6 +62,14 @@
       "description": "A Stop-hook harness that commits at each milestone, pushes the feature branch to keep work safe, and opens a draft PR/MR once the work is provably done — the goal's checklist satisfied AND the project's quality gate actually green. Forge-agnostic (GitHub/GitLab/Bitbucket): uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency. Branch-first, never commits or pushes the default branch, never merges, no AI attribution. Opt-in per repo.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/ship-when-done"
+    },
+    {
+      "name": "mr-watchdog",
+      "version": "1.0.0",
+      "source": "./plugins/mr-watchdog",
+      "description": "Triggered by an open merge request, a detached background watchdog monitors the MR's remote CI and drives it to green — on a red pipeline it fetches the failing job log, has a headless agent fix the ROOT CAUSE (never a bypass: no skipped/deleted/weakened tests, no --no-verify, no || true, no lowered thresholds), commits the fix on the branch to re-trigger CI, and loops until green or a bounded attempt cap. Only fixes a clean tree; never merges, never touches the default branch, never force-pushes. Opt-in per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The sequel to ship-when-done.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/mr-watchdog"
     }
   ]
 }
