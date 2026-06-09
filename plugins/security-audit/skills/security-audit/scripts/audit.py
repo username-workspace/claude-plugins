@@ -493,7 +493,8 @@ def main():
     ap.add_argument("--limit", type=int, default=100, help="max rows per table")
     ap.add_argument("--format", choices=["md", "html", "both"], default="md",
                     help="md (stdout), html (dark dashboard file), or both")
-    ap.add_argument("--out", default="/tmp/security-audit.html", help="HTML output path (--format html/both)")
+    ap.add_argument("--out", default=None,
+                    help="HTML output path (default: /tmp/security-audit-<root>-<timestamp>.html)")
     ap.add_argument("--skip-dirs", default="", help="extra comma-separated dirs/globs to skip")
     ap.add_argument("--include-gitignored", action="store_true",
                     help="don't auto-skip git-ignored paths")
@@ -558,7 +559,11 @@ def main():
         if behind:
             print(f"\n> Trivy {version} is behind {latest} — update it: {trivy_hint('upgrade')}.")
     if args.format in ("html", "both"):
-        out = Path(args.out)
+        if args.out:
+            out = Path(args.out)
+        else:
+            root = Path(paths[0]).resolve().name if not multi else "multi"
+            out = Path(f"/tmp/security-audit-{root or 'root'}-{datetime.now():%Y%m%d-%H%M%S}.html")
         out.write_text(report_html(target, vulns, secrets, misconfigs, footer, db_warn), encoding="utf-8")
         print(f"HTML report → {out.resolve()}", file=sys.stderr if args.format == "both" else sys.stdout)
 

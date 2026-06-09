@@ -1,6 +1,6 @@
 {
   "name": "coding-agent-usage",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Diagnose your own Claude Code usage and benchmark it against Anthropic's published per-developer figures. Parses local transcripts into cost, tokens, sessions, model mix, tool distribution, cache efficiency, thinking and subagent rates, per-project and per-week breakdowns, and renders an interactive HTML dashboard with a log-scale percentile gauge. Benchmark figures are fetched live and cached 24h. Includes a multi-provider view (Claude + Codex + Gemini via ccusage). Cost reconciles to within ~1% of ccusage. No account access.",
   "author": {
     "name": "Username",
