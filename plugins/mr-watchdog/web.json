@@ -1,11 +1,11 @@
 {
   "category": "DevOps",
   "tagline": "Open a merge request, then forget it — a background watchdog watches its CI and hands you the failure when it's red.",
-  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog runs a detached background watcher over the MR's remote CI. It runs no model of its own — so it never touches the headless/Agent-SDK credit pool — and it is strictly read-only: it never commits, pushes, or merges. While you move on it polls the pipeline; on green it tells you 'ok c'est bon'. On a red check it pulls the failing job log and, by default, continues your interactive session to fix the ROOT cause (no bypass) — autonomous, but on your subscription, never claude -p — via the Stop-hook continuation; set on_red:notify to just be told instead. A verify command lets that session self-check its fix for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds) before committing. Forge-agnostic (GitHub via gh, GitLab via glab). The natural sequel to ship-when-done.",
+  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog runs a detached background watcher over the MR's remote CI. It is strictly read-only: it never commits, pushes, or merges. While you move on it polls the pipeline; on green it tells you 'ok c'est bon'. On a red check it pulls the failing job log and, by default, continues your interactive session to fix the ROOT cause (no bypass) via the Stop-hook continuation; set on_red:notify to just be told instead. A verify command lets that session self-check its fix for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds) before committing. Forge-agnostic (GitHub via gh, GitLab via glab). The natural sequel to ship-when-done.",
   "capabilities": [
     "MR-triggered, not manual: a detached watcher starts when an open MR with live CI is detected, and survives across turns",
-    "Runs no model itself — zero headless/Agent-SDK spend; read-only, never commits, pushes, or merges",
-    "On red CI (default): continues your live session to fix the root cause — autonomous, yet on your subscription (no claude -p), via the Stop-hook continuation; or on_red:notify to just be told",
+    "Read-only watcher — it only polls CI and reads logs; never commits, pushes, or merges",
+    "On red CI (default): continues your live session to fix the root cause via the Stop-hook continuation; or on_red:notify to just be told",
     "verify: a fake-green gate your session runs before committing — blocks deleted/weakened tests, --no-verify, || true, lowered thresholds",
     "Forge-agnostic CI (GitHub via gh, GitLab via glab); opt-in per repo; one fix-trigger per failing pipeline (re-entrancy-guarded, no loop)"
   ],
