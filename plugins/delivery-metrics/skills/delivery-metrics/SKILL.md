@@ -38,7 +38,7 @@ no external services.
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/delivery-metrics/assets/report-template.html`
 2. Read `/tmp/delivery-metrics-data.json`
 3. Inject `<script>window.DATA = <json>;</script>` right before `</head>`
-4. Write to `<ROOT>/.delivery-metrics-report.html` and `open` it.
+4. Write to `/tmp/delivery-metrics-report.html` and `open` it.
 
 ### 4. Text summary
 Concise markdown: top KPIs (tickets delivered, mean velocity, best fix-ratio); ranking by velocity

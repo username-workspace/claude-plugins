@@ -492,7 +492,7 @@ def main():
     ap.add_argument("--limit", type=int, default=100, help="max rows per table")
     ap.add_argument("--format", choices=["md", "html", "both"], default="md",
                     help="md (stdout), html (dark dashboard file), or both")
-    ap.add_argument("--out", default="security-audit.html", help="HTML output path (--format html/both)")
+    ap.add_argument("--out", default="/tmp/security-audit.html", help="HTML output path (--format html/both)")
     ap.add_argument("--skip-dirs", default="", help="extra comma-separated dirs/globs to skip")
     ap.add_argument("--include-gitignored", action="store_true",
                     help="don't auto-skip git-ignored paths")
