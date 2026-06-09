@@ -1,13 +1,13 @@
 {
   "category": "DevOps",
-  "tagline": "Open a merge request, then forget it — a background watchdog drives its CI to green, fixing failures at the root.",
-  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog runs a detached background watcher over the MR's remote CI. While you move on, it polls the pipeline; on a red check it pulls the failing job log, spawns a headless agent to fix the ROOT CAUSE, commits the fix on the branch to re-trigger CI, and loops until green — then tells you 'ok c'est bon'. It refuses to fake green: no skipped/deleted tests, no --no-verify, no || true, no continue-on-error, no lowered thresholds; if the only way out is a workaround it stops and hands back to you. Never merges, never touches the default branch, never force-pushes. Bounded fix attempts. The natural sequel to ship-when-done.",
+  "tagline": "Open a merge request, then forget it — a background watchdog watches its CI and hands you the failure when it's red.",
+  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog runs a detached background watcher over the MR's remote CI. It runs no model of its own — so it never touches the headless/Agent-SDK credit pool — and it is strictly read-only: it never commits, pushes, or merges. While you move on it polls the pipeline; on green it tells you 'ok c'est bon', and on a red check it pulls the failing job log and hands the failure to your interactive session to fix at the ROOT (no bypass). A `verify` command lets that session self-check its change for fake-green — deleted/weakened tests, --no-verify, || true, lowered thresholds — before committing. Forge-agnostic (GitHub via gh, GitLab via glab). The natural sequel to ship-when-done.",
   "capabilities": [
     "MR-triggered, not manual: a detached watcher starts when an open MR with live CI is detected, and survives across turns",
-    "Root-cause fixes only — a curated anti-bypass gate reverts any 'fix' that skips/deletes tests or disables a check",
-    "Forge-agnostic CI: GitHub via gh, GitLab via glab — polls status, fetches the failing job log",
-    "Hard guardrails: never merges, never commits/pushes the default branch, never force-pushes, bounded fix attempts",
-    "Opt-in per repo; surfaces 'green / blocked / exhausted' back in your session and optionally as a desktop notification"
+    "Runs no model — zero headless/Agent-SDK spend; read-only, never commits, pushes, or merges",
+    "On red CI: fetches the failing job log and hands it to your live (subscription) session to fix at the root",
+    "verify: a fake-green gate your session runs before committing — blocks deleted/weakened tests, --no-verify, || true, lowered thresholds",
+    "Forge-agnostic CI (GitHub via gh, GitLab via glab); opt-in per repo; surfaces 'red handoff / green' in-session or as a desktop notification"
   ],
   "commands": ["watch"],
   "platforms": ["macOS", "Linux"]
