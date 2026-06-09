@@ -1,0 +1,371 @@
+#!/usr/bin/env bash
+# ship-when-done test suite — exercises the ladder + guardrails on real throwaway git repos.
+# A stubbed `gh` records calls (and flags any `pr merge`); a bare repo acts as the remote.
+set -u
+SHIP="$(cd "$(dirname "$0")/.." && pwd)/scripts/ship.py"
+ROOT="$(mktemp -d)"
+GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"
+PASS=0; FAIL=0
+
+# --- stub gh on PATH ---
+mkdir -p "$ROOT/bin"
+cat > "$ROOT/bin/gh" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$GH_LOG"
+key="\$(pwd | tr '/' '_')"
+case "\$1 \$2" in
+  "pr merge") echo "MERGE-CALLED \$@" >> "$GH_LOG"; exit 0;;
+  "pr view") if [ -f "$ROOT/pr-\$key-\$3" ]; then echo '{"state":"OPEN"}'; exit 0; else echo "no pull requests found" >&2; exit 1; fi;;
+  "pr create")
+     head=""; while [ \$# -gt 0 ]; do [ "\$1" = "--head" ] && head="\$2"; shift; done
+     [ -n "\$head" ] && touch "$ROOT/pr-\$key-\$head"
+     echo "https://example.test/pr/1"; exit 0;;
+  *) exit 0;;
+esac
+EOF
+chmod +x "$ROOT/bin/gh"
+export PATH="$ROOT/bin:$PATH"
+
+ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
+ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
+assert_contains(){ case "$2" in *"$1"*) ok "$3";; *) ko "$3 — expected to contain [$1] in [$2]";; esac; }
+assert_absent(){ case "$2" in *"$1"*) ko "$3 — unexpected [$1]";; *) ok "$3";; esac; }
+assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
+
+new_repo(){ # $1=dir  [$2=--remote]  [$3=forge-host, default github.com]
+  local d="$1" host="${3:-github.com}"; mkdir -p "$d"; git -C "$d" init -q -b main
+  git -C "$d" config user.email t@t.t; git -C "$d" config user.name t; git -C "$d" config commit.gpgsign false
+  echo init > "$d/README.md"; git -C "$d" add -A; git -C "$d" commit -qm init
+  if [ "${2:-}" = "--remote" ]; then
+    git init -q --bare "$d.git"; git -C "$d.git" config receive.advertisePushOptions true
+    git -C "$d" remote add origin "$d.git"
+    git -C "$d" config remote.origin.pushurl "$d.git"            # real pushes land on the bare repo
+    git -C "$d" config remote.origin.url "https://$host/test/repo.git"   # forge detection reads the fetch URL
+    git -C "$d" push -q -u origin main 2>/dev/null
+  fi
+}
+ladder(){ python3 "$SHIP" ladder --repo "$1" --verdict "$2" --gate "$3" ${4:+--goal "$4"} ${5:+--config "$5"} 2>&1; }
+
+# scoped PATHs so forge-CLI presence is deterministic regardless of the host machine
+PY="$(command -v python3)"
+mkdir -p "$ROOT/realbin"; ln -sf "$(command -v git)" "$ROOT/realbin/git"; ln -sf "$(command -v bash)" "$ROOT/realbin/bash"
+GLAB_LOG="$ROOT/glab.log"; : > "$GLAB_LOG"; mkdir -p "$ROOT/glabbin"
+cat > "$ROOT/glabbin/glab" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$GLAB_LOG"
+[ "\$1 \$2" = "mr create" ] && { echo "https://gitlab.test/mr/1"; exit 0; }
+exit 0
+EOF
+chmod +x "$ROOT/glabbin/glab"
+forge_ladder(){ env PATH="$2" "$PY" "$SHIP" ladder --repo "$1" --verdict '{"done":true,"summary":"add a"}' --gate pass 2>&1; }
+count(){ git -C "$1" rev-list --count "$2" 2>/dev/null || echo -1; }
+
+echo "ship-when-done tests"
+
+# 1. nothing in flight → skip
+d="$ROOT/t1"; new_repo "$d"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'nothing-in-flight' "$out" "1. clean repo → skipped"
+assert_eq 1 "$(count "$d" HEAD)" "1. no commit made"
+
+# 2. partial on feature branch + remote → commit + push, NO pr
+d="$ROOT/t2"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"; before=$(wc -l < "$GH_LOG")
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'commit' "$out" "2. partial → commit"
+assert_contains 'push' "$out" "2. partial → push"
+assert_eq 2 "$(count "$d" HEAD)" "2. one new commit"
+assert_eq "$before" "$(wc -l < "$GH_LOG")" "2. gh NOT called (no PR on partial)"
+git -C "$d.git" rev-parse --verify -q feat >/dev/null && ok "2. branch pushed to remote" || ko "2. branch pushed to remote"
+
+# 3. done + gate pass + remote → commit + push + DRAFT pr
+d="$ROOT/t3"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":true,"summary":"add a"}' pass)
+assert_contains 'pr:draft-pr' "$out" "3. done+green → draft PR"
+last=$(tail -1 "$GH_LOG")
+assert_contains 'pr create' "$last" "3. gh pr create called"
+assert_contains '--draft' "$last" "3. PR is a draft"
+
+# 4. done but gate FAIL → commit + push, NO pr
+d="$ROOT/t4"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+out=$(ladder "$d" '{"done":true}' fail)
+assert_contains 'push' "$out" "4. still commits+pushes"
+assert_contains 'pr-withheld:gate-not-green' "$out" "4. PR withheld on red gate"
+assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "4. no PR created on red gate"
+
+# 5. GUARDRAIL branch-first: dirty on main → branch + commit there, main untouched
+d="$ROOT/t5"; new_repo "$d"; main_before=$(count "$d" main)
+echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":false}' skip "ZV-4242 do the thing")
+assert_contains 'branched:' "$out" "5. branched off main"
+head=$(git -C "$d" rev-parse --abbrev-ref HEAD)
+[ "$head" != main ] && ok "5. HEAD left main ($head)" || ko "5. HEAD left main"
+assert_eq "$main_before" "$(count "$d" main)" "5. main has NO new commit (guardrail)"
+assert_eq 2 "$(count "$d" HEAD)" "5. commit landed on the feature branch"
+
+# 6. no remote → commit only, push skipped
+d="$ROOT/t6"; new_repo "$d"; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'commit' "$out" "6. commit without remote"
+assert_absent 'push' "$out" "6. no push (no remote)"
+assert_absent 'pr:' "$out" "6. no PR (no remote)"
+
+# 7. wip/ skip marker → untouched
+d="$ROOT/t7"; new_repo "$d" --remote; git -C "$d" checkout -q -b wip/spike
+echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'skip-marker' "$out" "7. wip/ branch skipped"
+assert_eq 1 "$(count "$d" HEAD)" "7. nothing committed on wip/"
+
+# 8. on_done=suggest → no gh call, surfaces the PR-creation URL
+d="$ROOT/t8"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"; echo '{"on_done":"suggest"}' > "$ROOT/cfg-suggest.json"; before=$(grep -c 'pr create' "$GH_LOG")
+out=$(ladder "$d" '{"done":true}' pass "" "$ROOT/cfg-suggest.json")
+assert_contains 'suggest-pr' "$out" "8. suggest mode → no auto-open"
+assert_contains 'compare/main...feat' "$out" "8. surfaces the PR-creation URL"
+assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "8. gh pr create NOT invoked in suggest mode"
+
+# 9. ticket commit convention → [TICKET] in message
+d="$ROOT/t9"; new_repo "$d"; git -C "$d" checkout -q -b zv-1234-work
+echo x > "$d/a.txt"; echo '{"commit_convention":"ticket"}' > "$ROOT/cfg-ticket.json"
+ladder "$d" '{"done":false,"type":"feat","summary":"do x"}' skip "ZV-1234 do x" "$ROOT/cfg-ticket.json" >/dev/null
+msg=$(git -C "$d" log -1 --pretty=%B)
+assert_contains '[ZV-1234]' "$msg" "9. ticket convention → [ZV-1234] in commit"
+
+# 10. idempotency → second run with nothing new = no commit, no duplicate PR
+d="$ROOT/t10"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"; ladder "$d" '{"done":true}' pass >/dev/null; after1=$(count "$d" HEAD); prc1=$(grep -c 'pr create' "$GH_LOG")
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'pr:exists' "$out" "10. second run sees the existing PR"
+assert_eq "$after1" "$(count "$d" HEAD)" "10. no duplicate commit"
+assert_eq "$prc1" "$(grep -c 'pr create' "$GH_LOG")" "10. no duplicate PR created"
+
+# 11. engage path — opt-in gating (config present → runs; absent → silent no-op)
+d="$ROOT/t11"; new_repo "$d"; git -C "$d" checkout -q -b feat
+echo '{}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(count "$d" HEAD)
+python3 "$SHIP" engage --repo "$d" --goal "do x" >/dev/null 2>&1
+[ "$(count "$d" HEAD)" -gt "$before" ] && ok "11. opt-in repo → engage committed" || ko "11. opt-in repo → engage committed"
+d2="$ROOT/t11b"; new_repo "$d2"; git -C "$d2" checkout -q -b feat; echo x > "$d2/a.txt"; before=$(count "$d2" HEAD)
+env -u SHIP_WHEN_DONE python3 "$SHIP" engage --repo "$d2" --goal "do x" >/dev/null 2>&1
+assert_eq "$before" "$(count "$d2" HEAD)" "11. no opt-in → engage is a silent no-op"
+
+# 12a. gate auto-detection from package.json (+ lockfile → runner)
+d="$ROOT/t12"; new_repo "$d"
+printf '{"scripts":{"ts:check":"tsc --noEmit","test":"vitest"}}' > "$d/package.json"; touch "$d/pnpm-lock.yaml"
+g=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$SHIP")'); import ship; print(ship.detect_gate('$d', dict(ship.DEFAULTS)))")
+assert_eq "pnpm ts:check" "$g" "12a. gate auto-detected (pnpm ts:check)"
+
+# 12b. engage, FREE eval: gate green (config) + done signal → draft PR, no model call
+d="$ROOT/t12b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" mark-done --repo "$d" --summary "do x" >/dev/null
+python3 "$SHIP" engage --repo "$d" --goal "ZV-1 do x" >/dev/null 2>&1
+[ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "12b. engage gate-green + done → draft PR (free)" || ko "12b. engage gate-green + done → draft PR (free)"
+assert_contains '--draft' "$(grep 'pr create' "$GH_LOG" | tail -1)" "12b. opened as draft"
+
+# 12c. engage: red gate → commit + push, NO PR
+d="$ROOT/t12c"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"false"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
+python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
+assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "12c. red gate → no PR"
+[ "$(count "$d" HEAD)" -gt 1 ] && ok "12c. red gate still committed (anti-loss)" || ko "12c. red gate still committed"
+
+# 13. re-entrance guard: a nested eval (SHIP_WHEN_DONE_EVAL set) is a hard no-op
+d="$ROOT/t13"; new_repo "$d"; git -C "$d" checkout -q -b feat
+printf '{}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(count "$d" HEAD)
+SHIP_WHEN_DONE_EVAL=1 python3 "$SHIP" engage --repo "$d" --goal x --last-message done >/dev/null 2>&1
+assert_eq "$before" "$(count "$d" HEAD)" "13. re-entrance guard → no-op (no nested commit)"
+
+# 14. mark-done marker drives done (no keyword, no todos) → draft PR, marker consumed
+d="$ROOT/t14"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary "did the thing" >/dev/null
+[ -f "$d/.git/swd-done.json" ] && ok "14. mark-done wrote the marker (in .git)" || ko "14. mark-done wrote the marker"
+before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" engage --repo "$d" --goal "ZV-9 x" >/dev/null 2>&1   # no --last-message: only the marker says done
+[ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "14. marker → draft PR (no keyword, no model)" || ko "14. marker → draft PR"
+[ ! -f "$d/.git/swd-done.json" ] && ok "14. marker consumed after PR" || ko "14. marker consumed after PR"
+
+# 15. all-todos-complete signal drives done → draft PR
+d="$ROOT/t15"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" engage --repo "$d" --goal x --todos-done >/dev/null 2>&1   # no marker, no keyword
+[ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "15. todos-complete → draft PR" || ko "15. todos-complete → draft PR"
+
+# 16. marker + RED gate → no PR, marker kept for next time
+d="$ROOT/t16"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"false"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null; before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
+assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "16. marker + red gate → no PR"
+[ -f "$d/.git/swd-done.json" ] && ok "16. marker kept when PR withheld" || ko "16. marker kept when PR withheld"
+
+# 17. detached HEAD → refuse (no commit)  [review C2]
+d="$ROOT/t17"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo y > "$d/b.txt"; git -C "$d" add -A; git -C "$d" commit -qm second; git -C "$d" checkout -q --detach HEAD
+echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'detached-head' "$out" "17. detached HEAD → refused"
+assert_absent '"commit"' "$out" "17. no commit on detached HEAD"
+
+# 18. merge in progress → refuse  [review C3]
+d="$ROOT/t18"; new_repo "$d"; git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"; touch "$d/.git/MERGE_HEAD"
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'merge-in-progress' "$out" "18. mid-merge → refused"
+assert_absent '"commit"' "$out" "18. no commit during a merge"
+
+# 19. unborn HEAD (no commits) → refuse, default untouched  [review C4]
+d="$ROOT/t19"; mkdir -p "$d"; git -C "$d" init -q -b main
+git -C "$d" config user.email t@t.t; git -C "$d" config user.name t
+echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'unborn-head' "$out" "19. unborn HEAD → refused"
+assert_absent '"commit"' "$out" "19. no commit on unborn HEAD"
+
+# 20. non-main trunk (develop) WITHOUT remote → branch-first, develop untouched  [review C1]
+d="$ROOT/t20"; mkdir -p "$d"; git -C "$d" init -q -b develop
+git -C "$d" config user.email t@t.t; git -C "$d" config user.name t; git -C "$d" config commit.gpgsign false
+echo i > "$d/r"; git -C "$d" add -A; git -C "$d" commit -qm init; dev_before=$(count "$d" develop); echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'branched:' "$out" "20. non-main trunk (develop) → branch-first"
+assert_eq "$dev_before" "$(count "$d" develop)" "20. develop has NO new commit (guardrail)"
+
+# 21. committed-but-unpushed work on default → surfaced, not silently skipped  [review H2]
+d="$ROOT/t21"; new_repo "$d" --remote
+echo y > "$d/b.txt"; git -C "$d" add -A; git -C "$d" commit -qm "local only"   # on main, not pushed, clean tree
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'unpushed-on-default' "$out" "21. unpushed-on-default surfaced (H2)"
+
+# 22. remote not named 'origin' → push still works  [review M3]
+d="$ROOT/t22"; mkdir -p "$d"; git -C "$d" init -q -b main
+git -C "$d" config user.email t@t.t; git -C "$d" config user.name t; git -C "$d" config commit.gpgsign false
+echo i > "$d/r"; git -C "$d" add -A; git -C "$d" commit -qm init
+git init -q --bare "$d.git"; git -C "$d" remote add gitlab "$d.git"; git -C "$d" push -q -u gitlab main 2>/dev/null
+git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'push' "$out" "22. pushes to a non-origin remote (M3)"
+git -C "$d.git" rev-parse --verify -q feat >/dev/null && ok "22. branch landed on the 'gitlab' remote" || ko "22. branch on gitlab remote"
+
+# 23. gh failing on `pr view` → no duplicate PR  [review M2]
+d="$ROOT/t23"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"
+mkdir -p "$ROOT/binfail"; cat > "$ROOT/binfail/gh" <<EOF
+#!/usr/bin/env bash
+[ "\$1 \$2" = "pr view" ] && { echo "could not authenticate to host" >&2; exit 1; }
+echo "\$@" >> "$GH_LOG"; exit 0
+EOF
+chmod +x "$ROOT/binfail/gh"; before=$(grep -c 'pr create' "$GH_LOG")
+out=$(PATH="$ROOT/binfail:$PATH" python3 "$SHIP" ladder --repo "$d" --verdict '{"done":true}' --gate pass 2>&1)
+assert_contains 'pr:check-failed' "$out" "23. gh error on pr view → not created (M2)"
+assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "23. no PR created on gh failure"
+
+# 24. suggest mode keeps the marker (only opened PRs consume it)  [review M1]
+d="$ROOT/t24"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"true","on_done":"suggest"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
+python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
+[ -f "$d/.git/swd-done.json" ] && ok "24. suggest mode keeps the marker (M1)" || ko "24. suggest mode keeps the marker"
+
+# 25. gitlab + glab present → draft MR via the glab CLI  [forge case 1b]
+d="$ROOT/t25"; new_repo "$d" --remote gitlab.com; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"; : > "$GLAB_LOG"
+out=$(forge_ladder "$d" "$ROOT/glabbin:$ROOT/realbin")
+assert_contains 'pr:draft-pr' "$out" "25. gitlab+glab → draft MR via glab"
+assert_contains 'mr create' "$(cat "$GLAB_LOG")" "25. glab mr create invoked"
+assert_contains '--draft' "$(cat "$GLAB_LOG")" "25. MR opened as draft"
+assert_contains '--target-branch main' "$(cat "$GLAB_LOG")" "25. target branch passed to glab"
+
+# 26. gitlab WITHOUT glab → MR requested through git push options (no CLI)  [forge case 2]
+d="$ROOT/t26"; new_repo "$d" --remote gitlab.com; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"
+out=$(forge_ladder "$d" "$ROOT/realbin")
+assert_contains 'push' "$out" "26. pushed the branch"
+assert_contains 'pr:gitlab-mr' "$out" "26. MR requested via push options (no CLI)"
+git -C "$d.git" rev-parse --verify -q feat >/dev/null && ok "26. branch landed on the remote" || ko "26. branch on remote"
+
+# 27. bitbucket (no CLI path) → PR-creation URL surfaced  [forge case 3]
+d="$ROOT/t27"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat
+echo x > "$d/a.txt"
+out=$(forge_ladder "$d" "$ROOT/realbin")
+assert_contains 'pr-url' "$out" "27. bitbucket → URL action"
+assert_contains 'bitbucket.org/test/repo/pull-requests/new' "$out" "27. constructed the bitbucket PR URL"
+
+# 28. forge helpers — URL parsing, URL construction, strategy selection, forge override (unit)
+cat > "$ROOT/forge_unit.py" <<'PY'
+import importlib.util, os
+spec = importlib.util.spec_from_file_location("ship", os.environ["SHIP"])
+ship = importlib.util.module_from_spec(spec); spec.loader.exec_module(ship)
+def check(c, m): print(("PASS " if c else "FAIL ") + "28. " + m)
+g = ship.parse_remote("git@gitlab.example.com:grp/sub/repo.git")
+check(g and g["forge"] == "gitlab" and g["https"] == "https://gitlab.example.com/grp/sub/repo", "parse self-hosted gitlab (scp, nested group)")
+check(ship.parse_remote("git@github.com:o/r.git")["forge"] == "github", "parse github (scp)")
+check(ship.parse_remote("ssh://git@bitbucket.org/t/r.git")["forge"] == "bitbucket", "parse bitbucket (ssh)")
+p = ship.parse_remote("ssh://git@gitlab.mycorp.com:2222/group/repo.git")
+check(p and p["host"] == "gitlab.mycorp.com" and p["path"] == "group/repo" and "2222" not in p["https"], "ssh non-standard port does not leak into host/path/url")
+c = ship.parse_remote("https://user:token@gitlab.com/g/r.git")
+check(c and c["host"] == "gitlab.com" and c["path"] == "g/r" and "token" not in c["https"], "https credentials stripped")
+pt = ship.parse_remote("https://gitlab.example.com:8080/g/r.git")
+check(pt and pt["host"] == "gitlab.example.com:8080" and pt["path"] == "g/r", "https web port kept on host, not in path")
+u = ship.parse_remote("file:///srv/git/x.git")
+check(u is None or u["forge"] == "unknown", "non-forge URL stays safe")
+check(ship.parse_remote("garbage") is None, "garbage rejected")
+check(ship.parse_remote("../local/bare") is None, "bare local path rejected")
+gl = ship.parse_remote("https://gitlab.com/g/r.git")
+check("/-/merge_requests/new?" in ship.pr_create_url(gl, "main", "f/x"), "gitlab MR URL shape")
+check(ship.pr_create_url(ship.parse_remote("https://github.com/o/r.git"), "main", "f") == "https://github.com/o/r/compare/main...f?expand=1", "github compare URL")
+orig = ship.which
+ship.which = lambda c: "/x/" + c
+check(ship.pr_strategy("github") == "gh" and ship.pr_strategy("gitlab") == "glab", "strategy picks the CLI when present")
+ship.which = lambda c: None
+check(ship.pr_strategy("github") == "url", "github without gh → url")
+check(ship.pr_strategy("gitlab") == "gitlab-push", "gitlab without glab → push options")
+check(ship.pr_strategy("bitbucket") == "url", "bitbucket → url")
+calls = []
+def fake_run(cmd, cwd, check=False):
+    calls.append(list(cmd))
+    return (0, "https://github.com/o/r.git", "") if cmd[:3] == ["git", "remote", "get-url"] else (0, "", "")
+ship.run = fake_run
+state = {"is_git": True, "repo": "/x", "branch": "feat", "default_branch": "main", "on_default": False,
+         "dirty": False, "has_remote": True, "remote": "origin", "has_upstream": True, "unpushed": 1,
+         "ahead_of_base": 1, "detached": False, "unborn": False, "mid_op": None}
+cfg = dict(ship.DEFAULTS); cfg["forge"] = "gitlab"
+res = ship.run_ladder(state, {"done": True, "summary": "x"}, "pass", cfg)
+piggy = any(c[:2] == ["git", "push"] and "merge_request.create" in c for c in calls)
+check("pr:gitlab-mr" in res["actions"] and piggy, "forge override forces gitlab-push despite a github remote")
+ship.which = orig
+PY
+while IFS= read -r line; do
+  case "$line" in PASS*) ok "${line#PASS }";; FAIL*) ko "${line#FAIL }";; esac
+done < <(SHIP="$SHIP" "$PY" "$ROOT/forge_unit.py")
+
+# 29. url strategy (bitbucket) → surfaces the clickable URL once, never re-nags  [review F2]
+d="$ROOT/t29"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat
+printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary "do x" >/dev/null
+out1=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)
+assert_contains 'pr-url' "$out1" "29. first engage emits pr-url"
+assert_contains 'bitbucket.org/test/repo/pull-requests/new' "$out1" "29. the actual PR URL is printed for the human"
+out2=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)   # no new work
+assert_absent 'pr-url' "$out2" "29. second engage (no new commits) does NOT re-nag"
+
+# 30. done turn makes NO new commit but the branch was pushed earlier → URL still surfaced once  [review F2 regression]
+d="$ROOT/t30"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat
+printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" >/dev/null 2>&1            # turn 1: commit + push, NOT done
+python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
+out=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)               # turn 2: done, no new edits, no push
+assert_contains 'pr-url' "$out" "30. done-but-already-pushed → URL surfaced even with no push this turn"
+assert_contains 'bitbucket.org' "$out" "30. the surfaced URL is the bitbucket one"
+out2=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)             # turn 3: tip unchanged
+assert_absent 'pr-url' "$out2" "30. third turn (tip unchanged) does NOT re-nag"
+
+# FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
+assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
+
+echo
+echo "PASS=$PASS FAIL=$FAIL"
+rm -rf "$ROOT"
+[ "$FAIL" -eq 0 ]
