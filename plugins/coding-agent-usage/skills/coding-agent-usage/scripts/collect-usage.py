@@ -25,7 +25,7 @@ def projects_dir(argv):
 def family(model):
     m = (model or "").lower()
     if "opus" in m:
-        legacy = any(t in m for t in ("opus-3", "opus-4-0", "opus-4-1", "4.0", "4.1"))
+        legacy = any(t in m for t in ("3-opus", "opus-4-0", "opus-4-1", "4.0", "4.1"))
         recent = any(t in m for t in ("4-5", "4-6", "4-7", "4-8", "4.5", "4.6", "4.7", "4.8"))
         return "opus_legacy" if (legacy and not recent) else "opus"
     for fam in ("sonnet", "haiku"):
