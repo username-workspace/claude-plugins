@@ -65,9 +65,9 @@
     },
     {
       "name": "mr-watchdog",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "source": "./plugins/mr-watchdog",
-      "description": "Triggered by an open merge request, a detached background watchdog monitors the MR's remote CI and drives it to green — on a red pipeline it fetches the failing job log, has a headless agent fix the ROOT CAUSE (never a bypass: no skipped/deleted/weakened tests, no --no-verify, no || true, no lowered thresholds), commits the fix on the branch to re-trigger CI, and loops until green or a bounded attempt cap. Only fixes a clean tree; never merges, never touches the default branch, never force-pushes. Opt-in per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The sequel to ship-when-done.",
+      "description": "Triggered by an open merge request, a detached background watchdog monitors the MR's remote CI. It runs no model of its own (no headless/Agent-SDK billing) and is strictly read-only — never commits, pushes, or merges. On a red pipeline it fetches the failing job log and hands the failure to your interactive session to fix at the ROOT (no bypass); a verify command self-checks the change for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds) before committing. Opt-in per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The sequel to ship-when-done.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/mr-watchdog"
     }

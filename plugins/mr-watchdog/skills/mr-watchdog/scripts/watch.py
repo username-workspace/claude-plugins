@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
-"""mr-watchdog — once a merge request is open, watch its remote CI in the background and drive it to
-green by fixing failures at the root. Never bypasses a check, never merges, never touches the default
-branch, never force-pushes. Opt-in per repo.
+"""mr-watchdog — once a merge request is open, watch its remote CI in the background and, on a red
+pipeline, hand the failure off to your interactive session to fix at the root.
 
-The loop is `tick`-shaped (one poll → at most one fix) so the daemon and the tests share the same code.
+It runs NO model of its own (no headless billing), and never commits, pushes, or merges — it polls the
+CI, fetches the failing job log, and surfaces it. The fix happens in your live (subscription) session;
+`verify` lets that session self-check its change for fake-green before committing. Opt-in per repo.
 """
-import argparse, json, os, re, signal, subprocess, sys
+import argparse, json, os, re, subprocess, sys
 from shutil import which
 
 DEFAULTS = {
-    "gate": None,
-    "forge": None,                    # github | gitlab; auto-detected from the remote if null
-    "poll_interval": 30,              # seconds between CI polls
-    "max_fix_attempts": 3,           # hard cap on autonomous fix rounds (bounds credit spend)
-    "fix_command": None,             # the headless fixer; defaults to `claude -p` (see fixer_command)
-    "fix_timeout": 1200,             # seconds per fix attempt
-    "notify": "status-file",         # status-file | desktop
+    "forge": None,            # github | gitlab; auto-detected from the remote if null
+    "poll_interval": 30,      # seconds between CI polls
+    "log_lines": 200,         # failing-log lines carried into the handoff
+    "notify": "status-file",  # status-file | desktop
     "skip_marker": "wip/",
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
 
-# A "fix" that merely hides the failure instead of resolving it. The watchdog refuses these outright.
+# A change that hides a failure instead of resolving it — surfaced by `verify` so the fix can't fake green.
 BYPASS_PATTERNS = [
     r"--no-verify",
     r"\|\|\s*true\b",
@@ -38,10 +36,12 @@ BYPASS_PATTERNS = [
     r"--maxfail\b",
     r"eslint-disable",
     r"#\s*type:\s*ignore",
-    r"#\s*noqa(?!:\s*E501)",                       # blanket noqa (line-length is benign)
+    r"#\s*noqa(?!:\s*E501)",
     r"@ts-(?:ignore|nocheck|expect-error)",
     r"\bskip_tests?\b",
 ]
+
+TEST_PATH = re.compile(r"(^|/)(tests?/|test_|conftest|.*[._-](test|spec)\.)", re.I)
 
 
 def run(cmd, cwd, check=False, timeout=None):
@@ -83,11 +83,6 @@ def current_branch(repo):
 def head_sha(repo):
     rc, sha, _ = run(["git", "rev-parse", "HEAD"], repo)
     return sha if rc == 0 else ""
-
-
-def tree_clean(repo):
-    rc, _, _ = run(["git", "diff", "--quiet", "HEAD"], repo)
-    return rc == 0
 
 
 def remote_name(repo):
@@ -185,7 +180,6 @@ def ci_status(repo, forge, branch):
 def failing_log(repo, forge, branch):
     if forge == "github":
         rc, out, _ = run(["gh", "run", "list", "-b", branch, "-L", "1", "--json", "databaseId"], repo)
-        rid = None
         try:
             rid = json.loads(out)[0]["databaseId"]
         except Exception:
@@ -271,15 +265,11 @@ def read_status(repo):
         return None
 
 
-def carried_attempts(prev, branch, head):
-    """Carry the attempt count across a restart only for the same branch AND head — so a user pushing a
-    new commit to an exhausted branch gets a fresh budget (matching cmd_start's re-arm gate)."""
-    if prev and prev.get("branch") == branch and prev.get("head") == head:
-        return prev.get("attempts", 0)
-    return 0
+# --- fake-green detection (used by `verify`, run in your live session before committing a fix) ------
 
+def added_lines(diff):
+    return "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
 
-# --- the fix step ----------------------------------------------------------------------------------
 
 def bypass_in_diff(diff):
     for pat in BYPASS_PATTERNS:
@@ -289,45 +279,6 @@ def bypass_in_diff(diff):
     return None
 
 
-def added_lines(diff):
-    return "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
-
-
-def fixer_command(cfg):
-    if cfg.get("fix_command"):
-        return ["bash", "-c", cfg["fix_command"]]
-    return ["claude", "-p", "--permission-mode", "acceptEdits"]
-
-
-FIX_PROMPT = (
-    "A CI job for this merge request is failing. Study the failure below and fix the ROOT CAUSE in the "
-    "working tree. Do NOT bypass the check: never disable, skip, delete or weaken a test; never add "
-    "ignore/disable directives, `|| true`, continue-on-error, allow_failure, or --no-verify; never "
-    "lower a threshold to hide the problem. Make the minimal correct change. Do not commit or push — "
-    "just leave the fix in the working tree. If the only way to make it pass is a workaround, make NO "
-    "change at all.\n\nFailing CI log:\n{log}\n"
-)
-
-
-TEST_PATH = re.compile(r"(^|/)(tests?/|test_|conftest|.*[._-](test|spec)\.)", re.I)
-
-
-def untracked(repo):
-    _, out, _ = run(["git", "ls-files", "--others", "--exclude-standard"], repo)
-    return set(filter(None, out.splitlines()))
-
-
-def revert_fix(repo, pre_untracked):
-    """Undo the fixer's work only: reset tracked edits/staged deletions back to HEAD, delete files it
-    created — never touch files the user already had untracked (reset --hard leaves those alone)."""
-    run(["git", "reset", "--hard", "HEAD"], repo)
-    for f in untracked(repo) - pre_untracked:
-        try:
-            os.remove(os.path.join(repo, f))
-        except OSError:
-            pass
-
-
 def deleted_tests(repo):
     _, ns, _ = run(["git", "diff", "HEAD", "--name-status"], repo)
     return [p.split("\t")[-1] for p in ns.splitlines()
@@ -335,7 +286,6 @@ def deleted_tests(repo):
 
 
 def weakened_tests(repo):
-    """A modified test file that drops an assertion is a fake-green, not a fix."""
     _, ns, _ = run(["git", "diff", "HEAD", "--name-status"], repo)
     for line in ns.splitlines():
         parts = line.split("\t")
@@ -354,57 +304,26 @@ def read_capped(repo, rel, cap=20000):
         return ""
 
 
-def run_fixer(repo, cfg, log):
-    if cfg.get("fix_command"):
-        env = dict(os.environ, MR_WATCHDOG_LOG=log[:8000])
-        try:
-            return subprocess.run(["bash", "-c", cfg["fix_command"]], cwd=repo, env=env,
-                                  capture_output=True, text=True, timeout=cfg["fix_timeout"]).returncode
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return 1
-    rc, _, _ = run(fixer_command(cfg) + [FIX_PROMPT.format(log=log[:8000])], repo, timeout=cfg["fix_timeout"])
-    return rc
-
-
-def propose_fix(repo, cfg, log, branch):
-    """Run the headless fixer, gatekeep its change, commit it only if it resolves the root cause.
-    Returns 'pushed' | 'blocked:bypass:<hit>' | 'blocked:nofix' | 'blocked:fixer' | 'blocked:branch-moved'.
-    On any block, only the fixer's own changes are reverted."""
-    pre = untracked(repo)
-    if run_fixer(repo, cfg, log) != 0:
-        revert_fix(repo, pre)
-        return "blocked:fixer"
+def fake_green(repo):
+    """Returns a short reason the working-tree change fakes green, else '' (the change looks honest)."""
+    g = deleted_tests(repo)
+    if g:
+        return f"deleted-test:{g[0][-40:]}"
+    w = weakened_tests(repo)
+    if w:
+        return f"weakened-test:{w[-40:]}"
     _, tracked, _ = run(["git", "diff", "HEAD"], repo)
-    new_files = sorted(untracked(repo) - pre)
-    if not tracked.strip() and not new_files:
-        return "blocked:nofix"
-    gutted = deleted_tests(repo)
-    if gutted:
-        revert_fix(repo, pre)
-        return f"blocked:bypass:deleted-test:{gutted[0][-30:]}"
-    weak = weakened_tests(repo)
-    if weak:
-        revert_fix(repo, pre)
-        return f"blocked:bypass:weakened-test:{weak[-30:]}"
+    _, un, _ = run(["git", "ls-files", "--others", "--exclude-standard"], repo)
+    new_files = [f for f in un.splitlines() if f]
     scan = added_lines(tracked) + "\n" + "\n".join(read_capped(repo, f) for f in new_files)
     hit = bypass_in_diff(scan)
-    if hit:
-        revert_fix(repo, pre)
-        return f"blocked:bypass:{hit[:40]}"
-    if current_branch(repo) != branch:
-        revert_fix(repo, pre)
-        return "blocked:branch-moved"
-    if new_files:
-        run(["git", "add", "--"] + new_files, repo)
-    run(["git", "add", "-u"], repo)
-    run(["git", "commit", "-m", "fix: resolve failing CI check"], repo, check=True)
-    return "pushed"
+    return f"bypass:{hit[:40]}" if hit else ""
 
 
-# --- the watch loop --------------------------------------------------------------------------------
+# --- the watch loop (read-only: poll → surface) ----------------------------------------------------
 
 def guard_state(repo, cfg):
-    """Returns (branch, forge, remote) or raises a string reason it must not run."""
+    """Returns (branch, forge, remote) or raises a string reason it must not watch."""
     rc, _, _ = run(["git", "rev-parse", "--is-inside-work-tree"], repo)
     if rc != 0:
         raise ValueError("not-a-git-repo")
@@ -426,7 +345,7 @@ def guard_state(repo, cfg):
 
 
 def tick(repo, cfg, branch, forge, remote):
-    """One cycle. Returns {'state': continue|green|failed-exhausted|blocked|no-mr|branch-changed}."""
+    """One poll. Returns {'state': continue|green|needs-fix|no-mr|branch-changed}. Read-only."""
     if current_branch(repo) != branch:
         return {"state": "branch-changed"}
     if not mr_open(repo, forge, branch):
@@ -434,21 +353,11 @@ def tick(repo, cfg, branch, forge, remote):
     status = ci_status(repo, forge, branch)
     if status == "success":
         return {"state": "green"}
-    if status in ("pending", "error", "none"):
-        return {"state": "continue", "ci": status}
-    if not tree_clean(repo):
-        return {"state": "blocked", "reason": "dirty-tree"}
-    attempts = (read_status(repo) or {}).get("attempts", 0)
-    if attempts >= cfg["max_fix_attempts"]:
-        return {"state": "failed-exhausted", "attempts": attempts}
-    log = failing_log(repo, forge, branch)
-    outcome = propose_fix(repo, cfg, log, branch)
-    if outcome == "pushed":
-        rc, _, err = run(["git", "push", remote, branch], repo)
-        if rc != 0:
-            return {"state": "blocked", "reason": f"push-failed:{err[:60]}"}
-        return {"state": "continue", "attempts": attempts + 1, "fixed": True}
-    return {"state": "blocked", "reason": outcome}
+    if status == "failed":
+        log = failing_log(repo, forge, branch)
+        tail = "\n".join(log.splitlines()[-int(cfg["log_lines"]):])
+        return {"state": "needs-fix", "log": tail}
+    return {"state": "continue", "ci": status}
 
 
 def terminate(repo, cfg, state, reason):
@@ -464,10 +373,7 @@ def run_loop(repo, cfg):
     except ValueError as e:
         terminate(repo, cfg, "stopped", str(e))
         return
-    prev = read_status(repo) or {}
-    attempts = carried_attempts(prev, branch, head_sha(repo))
-    write_status(repo, state="watching", branch=branch, head=head_sha(repo),
-                 attempts=attempts, announced=False, reason=None)
+    write_status(repo, state="watching", branch=branch, head=head_sha(repo), announced=False, reason=None)
     while True:
         try:
             if guard_state(repo, cfg)[0] != branch:
@@ -477,26 +383,27 @@ def run_loop(repo, cfg):
             terminate(repo, cfg, "stopped", str(e))
             return
         res = tick(repo, cfg, branch, forge, remote)
-        state = res["state"]
-        if "attempts" in res:
-            write_status(repo, attempts=res["attempts"], head=head_sha(repo))
-        if state == "continue":
-            if res.get("fixed"):
-                write_status(repo, state="fixing")
-            time.sleep(max(5, int(cfg["poll_interval"])))
-            continue
-        terminal = {"green": "green", "no-mr": "stopped", "failed-exhausted": "exhausted",
-                    "blocked": "blocked", "branch-changed": "stopped"}.get(state, "stopped")
-        terminate(repo, cfg, terminal, res.get("reason"))
-        return
+        st = res["state"]
+        if st == "green":
+            terminate(repo, cfg, "green", None)
+            return
+        if st in ("no-mr", "branch-changed"):
+            terminate(repo, cfg, "stopped", st)
+            return
+        if st == "needs-fix":
+            head = head_sha(repo)
+            if (read_status(repo) or {}).get("handoff_head") != head:
+                write_status(repo, state="needs-fix", branch=branch, head=head, handoff_head=head,
+                             log=res.get("log", ""), announced=False, reason=None)
+                notify(repo, cfg, "needs-fix", None)
+        time.sleep(max(5, int(cfg["poll_interval"])))
 
 
 def notify(repo, cfg, state, reason):
     msg = {"green": "ok c'est bon — CI au vert",
-           "exhausted": f"CI toujours rouge après {cfg['max_fix_attempts']} tentatives — à toi de jouer",
-           "blocked": f"arrêt : {reason or 'fix impossible sans contournement'}",
-           "stopped": f"arrêt : {reason or ''}"}.get(state, state)
-    if cfg.get("notify") == "desktop" and sys.platform == "darwin":
+           "needs-fix": f"CI rouge sur {os.path.basename(repo)} — à corriger (handoff)",
+           "stopped": f"arrêt : {reason or ''}"}.get(state)
+    if msg and cfg.get("notify") == "desktop" and sys.platform == "darwin":
         run(["osascript", "-e", f'display notification "{msg}" with title "mr-watchdog"'], repo)
 
 
@@ -521,11 +428,6 @@ def cmd_start(args):
         if args.verbose:
             print("[mr-watchdog] no open MR for this branch")
         return
-    st = read_status(repo) or {}
-    if st.get("branch") == branch and st.get("head") == head_sha(repo) and st.get("state") in ("exhausted", "blocked"):
-        if args.verbose:
-            print(f"[mr-watchdog] {branch} is {st['state']} ({st.get('reason') or ''}); push a change or `reset` to retry")
-        return
     if not acquire_lock(repo):
         return
     logf = open(os.path.join(git_dir(repo), "mr-watchdog.log"), "a")
@@ -543,17 +445,8 @@ def cmd_run(args):
     run_loop(repo, cfg)
 
 
-def cmd_reset(args):
-    repo = os.path.abspath(args.repo)
-    clear_lock(repo)
-    try:
-        os.remove(status_path(repo))
-    except OSError:
-        pass
-    print("[mr-watchdog] reset")
-
-
 def cmd_stop(args):
+    import signal
     repo = os.path.abspath(args.repo)
     try:
         pid = int(open(lock_path(repo)).read().strip())
@@ -565,6 +458,16 @@ def cmd_stop(args):
     print("[mr-watchdog] stopped")
 
 
+def cmd_reset(args):
+    repo = os.path.abspath(args.repo)
+    clear_lock(repo)
+    try:
+        os.remove(status_path(repo))
+    except OSError:
+        pass
+    print("[mr-watchdog] reset")
+
+
 def cmd_status(args):
     repo = os.path.abspath(args.repo)
     print(json.dumps(read_status(repo) or {"state": "none"}, indent=2))
@@ -573,16 +476,30 @@ def cmd_status(args):
 def cmd_announce(args):
     repo = os.path.abspath(args.repo)
     st = read_status(repo)
-    if not st or st.get("announced") or st.get("state") in ("watching", "fixing"):
+    if not st or st.get("announced") or st.get("state") == "watching":
         return
-    cfg = load_config(repo, args.config)
-    msg = {"green": "ok c'est bon — CI au vert",
-           "exhausted": f"CI toujours rouge après {cfg['max_fix_attempts']} tentatives — à toi de jouer",
-           "blocked": f"arrêt : {st.get('reason') or 'fix impossible sans contournement'}",
-           "stopped": f"arrêt : {st.get('reason') or ''}"}.get(st.get("state"))
-    if msg:
-        print(f"[mr-watchdog] {msg}")
+    if st.get("state") == "needs-fix":
+        print(f"[mr-watchdog] ⚠ CI rouge sur '{st.get('branch')}'. Corrige la CAUSE RACINE — pas de "
+              f"contournement (ne désactive/supprime/affaiblis aucun test, pas de --no-verify, || true, "
+              f"seuils baissés…). Puis `watch.py verify` avant de committer. Log du job en échec :")
+        log = st.get("log", "")
+        if log:
+            print(log[-4000:])
+    else:
+        msg = {"green": "ok c'est bon — CI au vert",
+               "stopped": f"arrêt : {st.get('reason') or ''}"}.get(st.get("state"))
+        if msg:
+            print(f"[mr-watchdog] {msg}")
     write_status(repo, announced=True)
+
+
+def cmd_verify(args):
+    repo = os.path.abspath(args.repo)
+    reason = fake_green(repo)
+    if reason:
+        print(f"[mr-watchdog] ✗ fake-green: {reason} — fix the root cause, don't hide the failure")
+        sys.exit(1)
+    print("[mr-watchdog] ✓ no bypass detected — the change addresses the failure, not the check")
 
 
 def cmd_tick(args):
@@ -596,7 +513,7 @@ def main():
     ap = argparse.ArgumentParser(description="mr-watchdog")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("start", cmd_start), ("_run", cmd_run), ("stop", cmd_stop), ("reset", cmd_reset),
-                     ("status", cmd_status), ("announce", cmd_announce), ("tick", cmd_tick)):
+                     ("status", cmd_status), ("announce", cmd_announce), ("verify", cmd_verify), ("tick", cmd_tick)):
         s = sub.add_parser(name)
         s.add_argument("--repo", default=".")
         s.add_argument("--config")
