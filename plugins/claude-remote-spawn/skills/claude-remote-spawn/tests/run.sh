@@ -12,6 +12,13 @@ echo "stubbed-1.0"
 exit 0
 EOF
 chmod +x "$ROOT/bin/claude"
+# stub script(1) so spawn never opens a real PTY — record the claude command line it would run
+cat > "$ROOT/bin/script" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$ROOT/script.cap"
+exit 0
+EOF
+chmod +x "$ROOT/bin/script"
 export PATH="$ROOT/bin:$PATH"
 
 # --- helpers ---
@@ -135,6 +142,41 @@ out=$(CRS_CLAUDE_BIN="$ROOT/bin/claude" CRS_HEADLESS_STATE="$STATE" CLAUDE_PROJE
       CRS_HEADLESS_PERM_FLAGS="" bash "$DRIVER" check 2>&1)
 perm_line="$(echo "$out" | grep '^perms')"
 assert_eq "perms  : " "$perm_line" "15. CRS_HEADLESS_PERM_FLAGS='' → empty perm"
+
+# 16. spawn --model with no value → exit 1 + clear message
+out=$(run_rc spawn --model)
+rc="${out##*$'\n'}"; body="${out%$'\n'*}"
+assert_eq 1 "$rc" "16. spawn --model (no value) → exit 1"
+assert_contains "--model needs a value" "$body" "16. spawn --model (no value) → clear message"
+
+# 17. resume <id> --model with no value → exit 1 (flag parsed before transcript lookup)
+out=$(run_rc resume someid --model)
+rc="${out##*$'\n'}"; body="${out%$'\n'*}"
+assert_eq 1 "$rc" "17. resume --model (no value) → exit 1"
+assert_contains "--model needs a value" "$body" "17. resume --model (no value) → clear message"
+
+# 18. spawn --model <m> passes '--model <m>' straight to claude, records it, reports it
+: > "$ROOT/script.cap"
+out=$(run spawn modeltest --model claude-fable-5)
+for _ in $(seq 1 50); do [ -s "$ROOT/script.cap" ] && break; sleep 0.1; done   # the launch is backgrounded
+assert_contains "modeltest" "$out" "18. spawn --model → returns the handle"
+assert_contains "model: claude-fable-5" "$out" "18. spawn --model → reports the model"
+assert_contains "--model claude-fable-5" "$(cat "$ROOT/script.cap" 2>/dev/null)" "18. --model passed through to claude"
+assert_contains "model=claude-fable-5" "$(cat "$STATE/modeltest.spawn" 2>/dev/null)" "18. model recorded in session state"
+# cleanup the backgrounded stdin-keeper so nothing lingers
+sp="$(sed -n 's/^subshell=//p' "$STATE/modeltest.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop modeltest >/dev/null 2>&1 || true
+
+# 19. spawn without --model passes NO --model flag (default model)
+: > "$ROOT/script.cap"
+out=$(run spawn nomodel)
+for _ in $(seq 1 50); do [ -s "$ROOT/script.cap" ] && break; sleep 0.1; done
+cap="$(cat "$ROOT/script.cap" 2>/dev/null)"
+{ [ -n "$cap" ] && case "$cap" in *--model*) false;; *) true;; esac; } && ok "19. no --model flag when omitted (claude default)" || ko "19. no --model when omitted — cap=[$cap]"
+sp="$(sed -n 's/^subshell=//p' "$STATE/nomodel.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop nomodel >/dev/null 2>&1 || true
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

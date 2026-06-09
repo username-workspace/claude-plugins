@@ -5,6 +5,7 @@
   "capabilities": [
     "Launches a persistent, visible session (claude --remote-control inside a PTY)",
     "Resumes an existing session by id (resolves its cwd) — compose with find-session to reopen one from a description",
+    "Pick the model with --model (any alias or id your claude accepts — passed straight through, never hardcoded)",
     "Shows up in Remote Control and in \"claude agents\", drivable from your phone",
     "Stays alive until you stop it, unlike a headless run that exits immediately",
     "Terminal-agnostic, no dependencies"
