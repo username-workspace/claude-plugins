@@ -54,6 +54,14 @@
       "description": "Full Trivy security audit — dependency CVEs across every ecosystem, secrets, and IaC misconfigurations — as a prioritised Markdown report and a dark HTML dashboard. Report-only, language-agnostic, Trivy the only dependency.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/security-audit"
+    },
+    {
+      "name": "ship-when-done",
+      "version": "1.0.0",
+      "source": "./plugins/ship-when-done",
+      "description": "A Stop-hook harness that commits at each milestone, pushes the feature branch to keep work safe, and opens a draft PR/MR once the work is provably done — the goal's checklist satisfied AND the project's quality gate actually green. Forge-agnostic (GitHub/GitLab/Bitbucket): uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency. Branch-first, never commits or pushes the default branch, never merges, no AI attribution. Opt-in per repo.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/ship-when-done"
     }
   ]
 }

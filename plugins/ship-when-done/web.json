@@ -1,0 +1,14 @@
+{
+  "category": "DevOps",
+  "tagline": "Commit at each milestone, push so nothing is lost, open the PR when it's actually done.",
+  "summary": "A Stop-hook harness that turns 'did you commit / push / open the MR?' from a thing you keep asking into a thing the agent does — gated on real signals, not self-confidence. Commits coherent milestones, pushes the feature branch (mandatory when a remote exists, anti-loss), and opens a draft PR/MR only when the goal's checklist is satisfied AND the project's quality gate is actually green. Forge-agnostic (GitHub, GitLab, Bitbucket), no CLI required. Branch-first, never on the default branch, never merges. Opt-in per repo.",
+  "capabilities": [
+    "Autonomy ladder keyed on a completion score: commit → push → draft PR/MR, each on its own trigger",
+    "Forge-agnostic PR/MR: uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency",
+    "Done is decided from free objective signals (gate actually green, no fresh TODOs) — no per-turn model call",
+    "Guardrails: branch-first, never commit/push the default branch, never auto-merge, no AI attribution",
+    "Opt-in per repo; zero-config (auto-detects the gate, forge, ticket pattern, commit convention)"
+  ],
+  "commands": ["ship"],
+  "platforms": ["macOS", "Linux"]
+}
