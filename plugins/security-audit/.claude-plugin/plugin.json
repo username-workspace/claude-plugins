@@ -1,6 +1,6 @@
 {
   "name": "security-audit",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Full Trivy security audit of a project — dependency CVEs across every ecosystem, hard-coded secrets, and IaC misconfigurations — rendered as a prioritised Markdown report. Report-only; surfaces fix versions without editing code. Only dependency is Trivy.",
   "author": {
     "name": "Username",

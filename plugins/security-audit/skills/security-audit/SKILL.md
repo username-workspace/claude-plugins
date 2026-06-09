@@ -24,7 +24,7 @@ and *to which version* to upgrade; applying the fix is their call.
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path] \
   [--scanners vuln,secret,misconfig] [--severity CRITICAL,HIGH,MEDIUM] [--limit 100] \
-  [--format md|html|both] [--out security-audit.html]
+  [--format md|html|both] [--out /tmp/security-audit.html]
 ```
 
 - `path` defaults to the current directory; pass a repo root or subdirectory.
