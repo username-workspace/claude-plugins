@@ -24,7 +24,7 @@ and *to which version* to upgrade; applying the fix is their call.
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path ...] \
   [--scanners vuln,secret,misconfig] [--severity CRITICAL,HIGH,MEDIUM] [--limit 100] \
-  [--format md|html|both] [--out /tmp/security-audit.html]
+  [--format md|html|both] [--out PATH]
 ```
 
 - `path` defaults to the current directory. Pass **one directory** (repo root or subdirectory) or
@@ -50,7 +50,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path ...
 - The report footer shows the Trivy version (validated against the latest release on every run,
   cached for 24h) and the vuln-DB freshness; `--no-version-check` skips the version check (offline/CI).
 
-Markdown goes to stdout; the HTML dashboard (when requested) is written to `--out`.
+Markdown goes to stdout; the HTML dashboard (when requested) is written to `--out` — default
+`/tmp/security-audit-<root>-<timestamp>.html` (`<root>` = basename of the scanned path, or `multi`
+for several; `<timestamp>` = `YYYYMMDD-HHMMSS`), so runs don't overwrite each other. The resolved
+path is printed.
 
 ### 2. Report
 

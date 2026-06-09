@@ -33,7 +33,9 @@ lands within ~1% of `ccusage` for Claude usage.
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/coding-agent-usage/assets/report-template.html`
 2. Read `/tmp/cc-diag-data.json`
 3. Inject `<script>window.DATA = <json>;</script>` right before `</head>`
-4. Write to `/tmp/coding-agent-usage.html` and `open` it.
+4. Write to `/tmp/coding-agent-usage-<root>-<timestamp>.html` and `open` it — where `<root>` is
+   `basename "$PWD"` (the directory the skill was run from) and `<timestamp>` is `date +%Y%m%d-%H%M%S`,
+   so runs don't overwrite each other.
 
 ### 3. Text summary
 Concise markdown: headline (cost, cost/active-day, percentile band), model mix, where the tokens go
@@ -51,7 +53,8 @@ With no argument it runs `npx ccusage@latest daily --json`; pass a pre-saved ccu
 network call. It attributes every `modelBreakdown` to a provider (Anthropic / OpenAI / Google / Other)
 by model name and emits per-provider cost, token and monthly-trend series. Build with
 `assets/report-multiprovider-template.html` (inject as `window.MDATA`, write to
-`/tmp/coding-agent-usage-multiprovider.html`). Answers "what's my total AI-coding spend and how is it split
+`/tmp/coding-agent-usage-multiprovider-<root>-<timestamp>.html`, same `<root>`/`<timestamp>` as above).
+Answers "what's my total AI-coding spend and how is it split
 across providers" — the Claude-only diagnosis stays the primary, deeper view.
 
 ## What it measures
