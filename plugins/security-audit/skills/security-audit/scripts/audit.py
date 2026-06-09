@@ -18,7 +18,7 @@ submodules too), and also skips nested git worktrees (duplicate checkouts) and t
 (tests/test/__tests__ — not shipped to prod). --skip-dirs adds more; --include-gitignored /
 --include-worktrees / --include-tests turn the defaults off.
 
-Usage: audit.py [path] [--scanners ...] [--severity ...] [--limit N] [--skip-dirs a,b]
+Usage: audit.py [path ...] [--scanners ...] [--severity ...] [--limit N] [--skip-dirs a,b]
                 [--include-gitignored] [--include-worktrees] [--include-tests] [--no-version-check]
 Writes the Markdown report to stdout. Exit 3 if Trivy is missing, 1 on scan failure.
 """
@@ -486,7 +486,8 @@ def report_html(path, vulns, secrets, misconfigs, footer, warn):
 
 def main():
     ap = argparse.ArgumentParser(description="Full Trivy security audit → Markdown report.")
-    ap.add_argument("path", nargs="?", default=".")
+    ap.add_argument("paths", nargs="*", default=["."], metavar="path",
+                    help="one or more dirs to scan (default: cwd); each scanned recursively")
     ap.add_argument("--scanners", default="vuln,secret,misconfig")
     ap.add_argument("--severity", default="CRITICAL,HIGH,MEDIUM")
     ap.add_argument("--limit", type=int, default=100, help="max rows per table")
@@ -508,22 +509,36 @@ def main():
         print(f"trivy not found — install it: {trivy_hint('install')}. Then re-run.", file=sys.stderr)
         sys.exit(3)
 
-    target = str(Path(args.path))
-    skip_dirs, skip_files = [], []
-    if not args.include_gitignored:
-        gdirs, gfiles = gitignored_skips(target)
-        skip_dirs += gdirs
-        skip_files += gfiles
-    if not args.include_worktrees:
-        skip_dirs += worktree_skips(target) + WORKTREE_GLOBS
-    if not args.include_tests:
-        skip_dirs += TEST_GLOBS
-    skip_dirs += [s.strip() for s in args.skip_dirs.split(",") if s.strip()]
-    skip_dirs = list(dict.fromkeys(skip_dirs))
-    skip_files = list(dict.fromkeys(skip_files))
-    data = run_trivy(target, args.scanners, args.severity, skip_dirs, skip_files)
-    vulns, secrets, misconfigs, dep_targets = collect(data)
-    classify_vulns(vulns, dep_targets)
+    paths = args.paths or ["."]
+    multi = len(paths) > 1
+    all_vulns, all_secrets, all_misconfigs = [], [], []
+    for p in paths:
+        target = str(Path(p))
+        skip_dirs, skip_files = [], []
+        if not args.include_gitignored:
+            gdirs, gfiles = gitignored_skips(target)
+            skip_dirs += gdirs
+            skip_files += gfiles
+        if not args.include_worktrees:
+            skip_dirs += worktree_skips(target) + WORKTREE_GLOBS
+        if not args.include_tests:
+            skip_dirs += TEST_GLOBS
+        skip_dirs += [s.strip() for s in args.skip_dirs.split(",") if s.strip()]
+        skip_dirs = list(dict.fromkeys(skip_dirs))
+        skip_files = list(dict.fromkeys(skip_files))
+        data = run_trivy(target, args.scanners, args.severity, skip_dirs, skip_files)
+        vulns, secrets, misconfigs, dep_targets = collect(data)
+        classify_vulns(vulns, dep_targets)
+        if multi:
+            label = Path(target).resolve().name if target == "." else target
+            for it in vulns + secrets + misconfigs:
+                if it.get("target") and it["target"] != "?":
+                    it["target"] = f"{label}/{it['target']}"
+        all_vulns += vulns
+        all_secrets += secrets
+        all_misconfigs += misconfigs
+    vulns, secrets, misconfigs = all_vulns, all_secrets, all_misconfigs
+    target = str(Path(paths[0])) if not multi else ", ".join(str(Path(p)) for p in paths)
 
     version = trivy_version()
     fresh_line, db_warn = db_freshness()

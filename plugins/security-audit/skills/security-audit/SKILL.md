@@ -22,12 +22,15 @@ and *to which version* to upgrade; applying the fix is their call.
 ### 1. Run the audit
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path] \
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path ...] \
   [--scanners vuln,secret,misconfig] [--severity CRITICAL,HIGH,MEDIUM] [--limit 100] \
   [--format md|html|both] [--out /tmp/security-audit.html]
 ```
 
-- `path` defaults to the current directory; pass a repo root or subdirectory.
+- `path` defaults to the current directory. Pass **one directory** (repo root or subdirectory) or
+  **several** — each is scanned recursively, classified independently (so nested-lockfile detection
+  stays correct per repo), and findings are merged into one report with each finding tagged by its
+  source folder. A single common parent also works (recursion descends into it).
 - **Output**: `--format md` (default) prints Markdown to stdout (terminal/agent-friendly). `--format
   html` writes a self-contained **dark dashboard** (Username design system, like delivery-metrics) to
   `--out`; `both` does Markdown to stdout **and** the HTML file. For a human-readable / shareable
