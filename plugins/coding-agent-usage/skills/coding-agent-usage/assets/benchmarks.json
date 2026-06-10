@@ -5,24 +5,77 @@
     "mean": 13,
     "p90": 30,
     "distribution": "lognormal",
-    "mu": 1.95,
-    "sigma": 1.13,
-    "median_implied": 7,
-    "note": "Lognormal fitted to the two officially published anchors (mean $13, 90th percentile $30). The implied median is ~$7/active-day. Any p50/p99 shown is interpolated from this fit, not separately published by Anthropic."
+    "mu": 1.7513,
+    "sigma": 1.2816,
+    "median_implied": 5.76,
+    "note": "Lognormal fitted to the two officially published anchors (mean $13, 90th percentile $30) via scripts/benchmark.py fit_lognormal — the seed mirrors the live fit exactly so the offline fallback places users at the same percentile. Implied median ~$5.8/active-day. Any p50/p99 shown is interpolated from this fit, not separately published by Anthropic."
   },
-  "cost_per_month_usd": { "mean": 200, "low": 150, "high": 250 },
-  "history": { "old_mean_per_day": 6, "old_p90_per_day": 12, "updated": "2026-04-15" },
+  "cost_per_month_usd": {
+    "mean": 200,
+    "low": 150,
+    "high": 250
+  },
+  "history": {
+    "old_mean_per_day": 6,
+    "old_p90_per_day": 12,
+    "updated": "2026-04-15"
+  },
   "tiers": [
-    { "name": "Light", "day_usd_low": 2, "day_usd_high": 5, "desc": "1-2 sessions/day, single-file tasks, mostly Sonnet, sessions under 30 min" },
-    { "name": "Medium", "day_usd_low": 6, "day_usd_high": 12, "desc": "3-5h active/day, multi-file features and refactors, Sonnet with occasional Opus" },
-    { "name": "Power", "day_usd_low": 30, "day_usd_high": null, "desc": "multiple instances, automation, agent teams, heavy Opus" }
+    {
+      "name": "Light",
+      "day_usd_low": 2,
+      "day_usd_high": 5,
+      "desc": "1-2 sessions/day, single-file tasks, mostly Sonnet, sessions under 30 min"
+    },
+    {
+      "name": "Medium",
+      "day_usd_low": 6,
+      "day_usd_high": 12,
+      "desc": "3-5h active/day, multi-file features and refactors, Sonnet with occasional Opus"
+    },
+    {
+      "name": "Power",
+      "day_usd_low": 30,
+      "day_usd_high": null,
+      "desc": "multiple instances, automation, agent teams, heavy Opus"
+    }
   ],
   "pricing_usd_per_mtok": {
-    "opus":         { "input": 5,  "output": 25, "cache_read": 0.5, "cache_write_5m": 6.25,  "cache_write_1h": 10 },
-    "opus_legacy":  { "input": 15, "output": 75, "cache_read": 1.5, "cache_write_5m": 18.75, "cache_write_1h": 30 },
-    "sonnet":       { "input": 3,  "output": 15, "cache_read": 0.3, "cache_write_5m": 3.75,  "cache_write_1h": 6 },
-    "haiku":        { "input": 1,  "output": 5,  "cache_read": 0.1, "cache_write_5m": 1.25,  "cache_write_1h": 2 },
-    "default":      { "input": 3,  "output": 15, "cache_read": 0.3, "cache_write_5m": 3.75,  "cache_write_1h": 6 }
+    "opus": {
+      "input": 5,
+      "output": 25,
+      "cache_read": 0.5,
+      "cache_write_5m": 6.25,
+      "cache_write_1h": 10
+    },
+    "opus_legacy": {
+      "input": 15,
+      "output": 75,
+      "cache_read": 1.5,
+      "cache_write_5m": 18.75,
+      "cache_write_1h": 30
+    },
+    "sonnet": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write_5m": 3.75,
+      "cache_write_1h": 6
+    },
+    "haiku": {
+      "input": 1,
+      "output": 5,
+      "cache_read": 0.1,
+      "cache_write_5m": 1.25,
+      "cache_write_1h": 2
+    },
+    "default": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write_5m": 3.75,
+      "cache_write_1h": 6
+    }
   },
   "pricing_note": "Anthropic API list prices per million tokens (Opus 4.5+ at the reduced $5/$25 tier; Opus 4.1 and earlier at $15/$75). Subscription (Pro/Max/Team/Enterprise) usage is included in the plan and not billed per token; these figures estimate the API-equivalent dollar value of the work done."
 }

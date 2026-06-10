@@ -179,7 +179,7 @@ assert_eq "pnpm ts:check" "$g" "12a. gate auto-detected (pnpm ts:check)"
 
 # 12b. engage, FREE eval: gate green (config) + done signal → draft PR, no model call
 d="$ROOT/t12b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" mark-done --repo "$d" --summary "do x" >/dev/null
 python3 "$SHIP" engage --repo "$d" --goal "ZV-1 do x" >/dev/null 2>&1
 [ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "12b. engage gate-green + done → draft PR (free)" || ko "12b. engage gate-green + done → draft PR (free)"
@@ -187,7 +187,7 @@ assert_contains '--draft' "$(grep 'pr create' "$GH_LOG" | tail -1)" "12b. opened
 
 # 12c. engage: red gate → commit + push, NO PR
 d="$ROOT/t12c"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"false"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+printf '{"gate":"false"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
 assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "12c. red gate → no PR"
@@ -201,7 +201,7 @@ assert_eq "$before" "$(count "$d" HEAD)" "13. re-entrance guard → no-op (no ne
 
 # 14. mark-done marker drives done (no keyword, no todos) → draft PR, marker consumed
 d="$ROOT/t14"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary "did the thing" >/dev/null
 [ -f "$d/.git/swd-done.json" ] && ok "14. mark-done wrote the marker (in .git)" || ko "14. mark-done wrote the marker"
 before=$(grep -c 'pr create' "$GH_LOG")
@@ -211,13 +211,13 @@ python3 "$SHIP" engage --repo "$d" --goal "ZV-9 x" >/dev/null 2>&1   # no --last
 
 # 15. all-todos-complete signal drives done → draft PR
 d="$ROOT/t15"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" engage --repo "$d" --goal x --todos-done >/dev/null 2>&1   # no marker, no keyword
 [ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "15. todos-complete → draft PR" || ko "15. todos-complete → draft PR"
 
 # 16. marker + RED gate → no PR, marker kept for next time
 d="$ROOT/t16"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"false"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+printf '{"gate":"false"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null; before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
 assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "16. marker + red gate → no PR"
@@ -283,7 +283,7 @@ assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "23. no PR created on gh 
 
 # 24. suggest mode keeps the marker (only opened PRs consume it)  [review M1]
 d="$ROOT/t24"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"true","on_done":"suggest"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+printf '{"gate":"true","on_done":"suggest"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
 [ -f "$d/.git/swd-done.json" ] && ok "24. suggest mode keeps the marker (M1)" || ko "24. suggest mode keeps the marker"
@@ -362,7 +362,7 @@ done < <(SHIP="$SHIP" "$PY" "$ROOT/forge_unit.py")
 
 # 29. url strategy (bitbucket) → surfaces the clickable URL once, never re-nags  [review F2]
 d="$ROOT/t29"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" mark-done --repo "$d" --summary "do x" >/dev/null
 out1=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)
 assert_contains 'pr-url' "$out1" "29. first engage emits pr-url"
@@ -372,7 +372,7 @@ assert_absent 'pr-url' "$out2" "29. second engage (no new commits) does NOT re-n
 
 # 30. done turn makes NO new commit but the branch was pushed earlier → URL still surfaced once  [review F2 regression]
 d="$ROOT/t30"; new_repo "$d" --remote bitbucket.org; git -C "$d" checkout -q -b feat; arm "$d"
-printf '{"gate":"true"}' > "$d/.ship-when-done.json"; echo x > "$d/a.txt"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"; echo x > "$d/a.txt"
 python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" >/dev/null 2>&1            # turn 1: commit + push, NOT done
 python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
 out=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)               # turn 2: done, no new edits, no push
@@ -432,6 +432,20 @@ d="$ROOT/t33b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d
 mkdir -p "$d/docs"; echo '# x' > "$d/docs/guide.md"
 python3 "$SHIP" engage --repo "$d" --goal "x" --last-message "noise" >/dev/null 2>&1
 case "$(git -C "$d" log -1 --pretty=%s)" in docs*) ok "33b. all-docs change → docs: type";; *) ko "33b. docs type — got [$(git -C "$d" log -1 --pretty=%s)]";; esac
+
+# 34. SECURITY: command fields in the working-tree config are ignored (a cloned repo can't execute code)
+d="$ROOT/t34"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+printf '{"gate":"touch %s/pwned-gate","judge_command":"touch %s/pwned-judge"}' "$d" "$d" > "$d/.ship-when-done.json"
+echo x > "$d/a.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null
+python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
+[ ! -f "$d/pwned-gate" ] && ok "34. tree-config gate NOT executed" || ko "34. tree-config gate executed (RCE)"
+[ ! -f "$d/pwned-judge" ] && ok "34. tree-config judge_command NOT executed" || ko "34. tree-config judge_command executed (RCE)"
+g=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$SHIP")'); import ship; print(ship.load_config('$d')['gate'])")
+assert_eq "None" "$g" "34. load_config strips gate from the tree file"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
+g=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$SHIP")'); import ship; print(ship.load_config('$d')['gate'])")
+assert_eq "true" "$g" "34. .git/ship-when-done.json still sets the gate (local, never cloned)"
 
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"

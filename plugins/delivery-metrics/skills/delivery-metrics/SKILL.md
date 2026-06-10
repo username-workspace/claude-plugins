@@ -69,7 +69,9 @@ no holidays/leaves (available days = weekdays — the report then hides the leav
 **Availability provider (`availability_command`)** — for live leave/holiday data, point this at any
 command that prints `{"holidays":[...iso...], "leaves":[{"author","start","end","fraction"}...]}` on
 stdout. It runs in `<ROOT>` with `DM_SINCE`/`DM_UNTIL` in the environment, and its output is merged
-into `holidays`/`leaves`. This keeps the skill generic: an org plugs its own HR source (e.g. a
+into `holidays`/`leaves`. 🔒 Because it is a shell command, it is honored **only from an explicitly
+passed config file** — in the auto-loaded `<ROOT>/.delivery-metrics.json` it is ignored (a file
+arriving with a clone must not execute code). This keeps the skill generic: an org plugs its own HR source (e.g. a
 TimeOff/Workday/calendar fetcher) opaquely, without that integration living in the skill.
 
 ## Key metrics

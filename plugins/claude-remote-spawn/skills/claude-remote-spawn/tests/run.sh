@@ -120,8 +120,20 @@ rc="${out##*$'\n'}"
 body="${out%$'\n'*}"
 assert_eq 0 "$rc" "12. list (with session) → exit 0"
 assert_contains "alpha" "$body" "12. list shows session name"
-assert_contains "dead" "$body" "12. list marks non-running pid as dead"
+assert_contains "dead" "$body" "12. list marks a session with no live PTY process as dead"
 rm -f "$STATE/alpha.spawn"
+
+# 12b. liveness follows the REAL process, not the (tail-kept-alive) wrapper subshell
+( exec -a "remote-control livetest stub" sleep 30 ) & lpid=$!
+printf 'name=livetest\ncwd=/tmp\nstarted=x\nsubshell=%s\npgid=%s\n' "$lpid" "$lpid" > "$STATE/livetest.spawn"
+sleep 0.3
+lt=$(run_rc list); lt="${lt%$'\n'*}"; lt=$(printf '%s\n' "$lt" | grep livetest)
+case "$lt" in *live*) ok "12b. a running remote-control process → live";; *) ko "12b. expected live — got [$lt]";; esac
+kill "$lpid" 2>/dev/null; wait "$lpid" 2>/dev/null
+sleep 0.2
+lt=$(run_rc list); lt="${lt%$'\n'*}"; lt=$(printf '%s\n' "$lt" | grep livetest)
+case "$lt" in *dead*) ok "12b. process gone → dead (no tail-kept-alive false positive)";; *) ko "12b. expected dead — got [$lt]";; esac
+rm -f "$STATE/livetest.spawn"
 
 # 13. check → exit 0, reports stub claude version
 out=$(run_rc check)
@@ -177,6 +189,52 @@ cap="$(cat "$ROOT/script.cap" 2>/dev/null)"
 sp="$(sed -n 's/^subshell=//p' "$STATE/nomodel.spawn" 2>/dev/null | head -1)"
 [ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
 run stop nomodel >/dev/null 2>&1 || true
+
+# 20. resume happy path — transcript WITH aiTitle → name recovered from the title
+mkdir -p "$PROJECTS/-tmp-proj"
+printf '{"cwd":"/tmp","aiTitle": "Fix The Payload Hash"}\n' > "$PROJECTS/-tmp-proj/sess-with-title.jsonl"
+: > "$ROOT/script.cap"
+out=$(run resume sess-with-title)
+for _ in $(seq 1 50); do [ -s "$ROOT/script.cap" ] && break; sleep 0.1; done
+assert_contains "fix-the-payload-hash" "$out" "20. resume → handle slugified from aiTitle"
+assert_contains "--resume sess-with-title" "$(cat "$ROOT/script.cap" 2>/dev/null)" "20. resume → claude --resume <id>"
+assert_contains "--fork-session" "$(cat "$ROOT/script.cap" 2>/dev/null)" "20. resume → forks by default"
+sp="$(sed -n 's/^subshell=//p' "$STATE/fix-the-payload-hash.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop fix-the-payload-hash >/dev/null 2>&1 || true
+
+# 21. resume happy path — transcript WITHOUT aiTitle → falls back to a NATO name (regression:
+# a grep miss under pipefail used to kill the script before the fallback ran)
+printf '{"cwd":"/tmp"}\n' > "$PROJECTS/-tmp-proj/sess-no-title.jsonl"
+: > "$ROOT/script.cap"
+out=$(run resume sess-no-title); rc=$?
+assert_eq 0 "$rc" "21. resume without aiTitle → exit 0 (no pipefail death)"
+assert_contains "resumed sess-no-title" "$out" "21. resume without aiTitle → resumes with fallback name"
+handle="$(echo "$out" | head -1)"
+sp="$(sed -n 's/^subshell=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop "$handle" >/dev/null 2>&1 || true
+
+# 22. SECURITY: user-supplied name is slugified — no path traversal out of STATE_DIR
+out=$(run spawn "../outside/evil")
+handle="$(echo "$out" | head -1)"
+assert_eq "outside-evil" "$handle" "22. hostile name slugified"
+[ ! -e "$ROOT/outside" ] && ok "22. nothing written outside STATE_DIR" || ko "22. path traversal: wrote outside STATE_DIR"
+sp="$(sed -n 's/^subshell=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop "$handle" >/dev/null 2>&1 || true
+
+# 23. stop kills the WHOLE process group — the immortal `tail -f /dev/null` does not leak
+: > "$ROOT/script.cap"
+out=$(run spawn leaktest)
+handle="$(echo "$out" | head -1)"
+for _ in $(seq 1 50); do [ -s "$STATE/$handle.spawn" ] && break; sleep 0.1; done
+pg="$(sed -n 's/^pgid=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
+sleep 0.3
+{ [ -n "$pg" ] && pgrep -g "$pg" >/dev/null 2>&1; } && ok "23. spawn → its process group is populated" || ko "23. spawn → process group populated (pg=$pg)"
+run stop "$handle" >/dev/null 2>&1 || true
+sleep 0.3
+pgrep -g "$pg" >/dev/null 2>&1 && ko "23. group survived stop — tail/process leaked" || ok "23. stop kills the whole group (no tail leak)"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

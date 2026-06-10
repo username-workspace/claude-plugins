@@ -32,7 +32,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/security-audit/scripts/audit.py" [path ...
   stays correct per repo), and findings are merged into one report with each finding tagged by its
   source folder. A single common parent also works (recursion descends into it).
 - **Output**: `--format md` (default) prints Markdown to stdout (terminal/agent-friendly). `--format
-  html` writes a self-contained **dark dashboard** (Username design system, like delivery-metrics) to
+  html` writes a single-file **dark dashboard** (Username design system, like delivery-metrics;
+  webfonts load from Google Fonts when online, system fallback offline) to
   `--out`; `both` does Markdown to stdout **and** the HTML file. For a human-readable / shareable
   review, prefer `both`, then `open` the HTML.
 - Defaults scan vulns + secrets + misconfig at CRITICAL/HIGH/MEDIUM. Narrow with `--severity`
