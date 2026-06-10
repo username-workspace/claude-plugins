@@ -316,6 +316,29 @@ assert_contains 'Misconfigurations (IaC)' "$htm" "E10. IaC section in dashboard"
 assert_contains 'SG allows 0.0.0.0/0' "$htm" "E10. misconfig title rendered in HTML"
 assert_contains 'class="sev crit"' "$htm" "E10. critical badge class in HTML"
 
+# E11. gitignored_skips on a REAL repo — root scan AND subdirectory scan (porcelain paths
+# are toplevel-relative; the subdir case used to produce skips that matched nothing)
+g="$ROOT/gitskips"; mkdir -p "$g/apps/api/node_modules" "$g/apps/api/src"
+git -C "$g" init -q -b main; git -C "$g" config user.email t@t.t; git -C "$g" config user.name t
+printf 'node_modules/\n.env.local\n' > "$g/.gitignore"
+echo x > "$g/apps/api/node_modules/junk.js"; echo s > "$g/apps/api/.env.local"; echo k > "$g/apps/api/src/ok.js"
+git -C "$g" add -A; git -C "$g" -c commit.gpgsign=false commit -qm init
+skips_of(){ env AUDIT="$AUDIT" SCAN="$1" "$PY" - <<'PY'
+import importlib.util, os, json
+spec = importlib.util.spec_from_file_location("audit", os.environ["AUDIT"])
+audit = importlib.util.module_from_spec(spec); spec.loader.exec_module(audit)
+d, f = audit.gitignored_skips(os.environ["SCAN"])
+print(json.dumps({"dirs": d, "files": f}))
+PY
+}
+out=$(skips_of "$g")
+assert_contains 'apps/api/node_modules' "$out" "E11. root scan skips ignored dir"
+assert_contains 'apps/api/.env.local' "$out" "E11. root scan skips ignored file"
+out=$(skips_of "$g/apps/api")
+assert_contains '"node_modules"' "$out" "E11. SUBDIR scan skips node_modules (root-relative rebase)"
+assert_contains '".env.local"' "$out" "E11. SUBDIR scan skips .env.local"
+assert_absent 'apps/api/apps' "$out" "E11. no doubled apps/api/apps path"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"

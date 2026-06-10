@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, sys, math, glob
+import json, os, re, sys, math, glob
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta, timezone
 
@@ -22,12 +22,18 @@ def projects_dir(argv):
     return cand if os.path.isdir(cand) else base
 
 
+# minor capped at 2 digits so a date suffix (opus-4-20250514) never reads as a version
+OPUS_VERSION_RE = re.compile(r"opus[-_]?(\d+)[.-](\d{1,2})(?!\d)")
+
+
 def family(model):
     m = (model or "").lower()
     if "opus" in m:
-        legacy = any(t in m for t in ("3-opus", "opus-4-0", "opus-4-1", "4.0", "4.1"))
-        recent = any(t in m for t in ("4-5", "4-6", "4-7", "4-8", "4.5", "4.6", "4.7", "4.8"))
-        return "opus_legacy" if (legacy and not recent) else "opus"
+        if "3-opus" in m:
+            return "opus_legacy"
+        ver = OPUS_VERSION_RE.search(m)
+        legacy = bool(ver) and (int(ver.group(1)), int(ver.group(2))) <= (4, 1)
+        return "opus_legacy" if legacy else "opus"
     for fam in ("sonnet", "haiku"):
         if fam in m:
             return fam

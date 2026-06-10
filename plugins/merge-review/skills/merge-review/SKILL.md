@@ -195,7 +195,7 @@ When `auto_fix` is on and the score is below threshold, **drive the diff to read
 4. Repeat until the score is **≥ threshold**, or only **contestable** findings remain.
 5. If only contestable findings remain below threshold, or the only way to pass is a workaround → **STOP**. Surface the remaining findings and the evidence; do not bypass, do not force-pass. The user decides.
 
-This is what the pre-push gate asks for: it denies a push of an unreviewed HEAD until a passing pass is recorded. A clean review records the pass and the push proceeds.
+This is what the pre-push gate asks for: it denies the **first** push of an unreviewed HEAD and asks for this review — advisory, once per HEAD: a retried push at the same HEAD goes through, so it nudges without ever walling a push. A clean review records the pass and subsequent pushes are not challenged.
 
 ---
 

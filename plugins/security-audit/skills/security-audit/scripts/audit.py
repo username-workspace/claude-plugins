@@ -202,6 +202,13 @@ def gitignored_skips(root):
     dirs, files = set(), set()
     for repo in _repo_paths(root):
         try:
+            # porcelain paths are relative to the repo TOPLEVEL, not to -C — matters when
+            # the scanned path is a subdirectory of a repo
+            top = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                                 capture_output=True, text=True)
+            if top.returncode != 0 or not top.stdout.strip():
+                continue
+            base = Path(top.stdout.strip())
             out = subprocess.run(["git", "-C", str(repo), "status", "--ignored", "--porcelain", "-z"],
                                  capture_output=True, text=True).stdout
         except OSError:
@@ -210,7 +217,7 @@ def gitignored_skips(root):
             if not entry.startswith("!! "):
                 continue
             raw = entry[3:]
-            p = (Path(repo) / raw).resolve()
+            p = (base / raw).resolve()
             if p != rootp and rootp not in p.parents:
                 continue
             (dirs if raw.endswith("/") else files).add(p.relative_to(rootp).as_posix())

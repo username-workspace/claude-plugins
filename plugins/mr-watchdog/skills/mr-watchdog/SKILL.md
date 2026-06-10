@@ -86,7 +86,8 @@ No config is required — it engages on its own. Drop a `.mr-watchdog.json` only
   "forge": null,           // github | gitlab — auto-detected from the remote unless set
   "poll_interval": 30,     // seconds between CI polls
   "log_lines": 200,        // failing-log lines carried into the handoff
-  "skip_marker": "wip/"
+  "skip_marker": "wip/",
+  "watch_timeout": 3600    // seconds before a still-pending watch gives up (the poll loop is always bounded)
 }
 ```
 
