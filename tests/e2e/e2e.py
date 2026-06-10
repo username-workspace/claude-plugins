@@ -201,10 +201,10 @@ def run_scenario(sc, tag):
     if sc["gate"] == "red-then-fixed":
         expect("gate-not-green" in out, "red gate: PR withheld visibly", out)
         open(os.path.join(workdir, ".git", "gate-healed"), "w").write("x")
-        out = stop(cwd, session, tp, active=True)
 
     expect('"decision": "block"' in out and "merge-review" in out,
-           "done work must be held for the merge-review pass", out)
+           "done work must be held for the merge-review pass (the block rides the FIRST stop, "
+           "once per work-state — a red gate does not delay it)", out)
     expect(pr_state(branch) is None, "nothing on the forge before the review", out)
     sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
     out = stop(cwd, session, tp, active=True)

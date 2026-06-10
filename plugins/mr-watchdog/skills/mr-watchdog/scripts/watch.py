@@ -496,7 +496,9 @@ def launch_instruction(repo):
 def cmd_run(args):
     """Foreground CI watcher meant to be launched with run_in_background. Polls until the pipeline
     resolves, prints the verdict, and exits (0 green / 1 red). The harness re-invokes the session with
-    this output — that is how the verdict reaches you. Read-only."""
+    this output — that is how the verdict reaches you. Read-only. A red status is confirmed on a
+    second poll before the verdict: right after a push the forge can briefly serve the PREVIOUS run's
+    failure, and one stale read must never produce a false red."""
     repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
     if not cfg.get("enabled", True):
@@ -509,6 +511,7 @@ def cmd_run(args):
     head = head_sha(repo)
     deadline = time.time() + float(args.timeout or cfg.get("watch_timeout", 3600))
     errors = 0
+    red_seen = False
     while True:
         if current_branch(repo) != branch or head_sha(repo) != head:
             print("[mr-watchdog] stopped: branch/HEAD moved — a fresh watcher starts after the next push")
@@ -526,6 +529,10 @@ def cmd_run(args):
             print(f"[mr-watchdog] ok, all good — CI green on '{branch}'")
             return
         if status == "failed":
+            if not red_seen:
+                red_seen = True
+                time.sleep(max(1, int(cfg["poll_interval"])))
+                continue
             log = failing_log(repo, forge, branch)
             if cfg.get("on_red", "fix") == "fix":
                 print(fix_instruction(repo, branch, log))
@@ -533,6 +540,7 @@ def cmd_run(args):
                 tail = "\n".join(log.splitlines()[-int(cfg["log_lines"]):])
                 print(f"[mr-watchdog] CI red on '{branch}' — needs a fix. Failing job log:\n{tail}")
             sys.exit(1)
+        red_seen = False
         if time.time() > deadline:
             print(f"[mr-watchdog] stopped: timeout while CI was {status}")
             return

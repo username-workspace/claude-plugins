@@ -138,6 +138,7 @@ assert_contains 'green' "$out" "6. weakened/assert-True test flagged"
 
 # 7. run (the bg watcher): poll until the pipeline resolves, then exit with the verdict (read-only)
 d="$ROOT/run"; new_repo "$d"; before=$(count "$d" HEAD)
+printf '{"poll_interval":1}' > "$d/.mr-watchdog.json"
 out=$(STUB_CI=success python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_contains "ok, all good" "$out" "7. green → the wake word"
 assert_eq 0 "$rc" "7. green → exit 0"
@@ -149,12 +150,29 @@ assert_eq 1 "$rc" "7. red → exit 1 (so the harness re-invokes with a failure)"
 assert_eq "$before" "$(count "$d" HEAD)" "7. READ-ONLY: the watcher made no commit"
 git -C "$d" diff --quiet && ok "7. READ-ONLY: working tree untouched" || ko "7. working tree untouched"
 assert_contains 'no open merge request' "$(STUB_CI=failed STUB_MR_STATE=CLOSED python3 "$WATCH" run --repo "$d" 2>&1)" "7. MR closed → watcher exits, does not watch"
-printf '{"on_red":"notify"}' > "$d/.mr-watchdog.json"
+printf '{"on_red":"notify","poll_interval":1}' > "$d/.mr-watchdog.json"
 out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_absent 'ROOT CAUSE' "$out" "7. on_red=notify → no fix directive"
 assert_contains 'CI red' "$out" "7. on_red=notify → passive red report"
 assert_eq 1 "$rc" "7. on_red=notify → still exit 1"
 printf '{}' > "$d/.mr-watchdog.json"
+
+# 7b. a red read on one poll is confirmed on the next — a stale red (old run, fresh push) self-heals
+d="$ROOT/flip"; new_repo "$d"
+printf '{"poll_interval":1}' > "$d/.mr-watchdog.json"
+mkdir -p "$ROOT/flipbin"
+cat > "$ROOT/flipbin/gh" <<FLIPGH
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "pr view") echo '{"state":"OPEN"}';;
+  "pr checks") if [ -f "$ROOT/flip-done" ]; then echo '[{"bucket":"pass"}]'; else touch "$ROOT/flip-done"; echo '[{"bucket":"fail"}]'; fi;;
+  *) exit 0;;
+esac
+FLIPGH
+chmod +x "$ROOT/flipbin/gh"
+out=$(env PATH="$ROOT/flipbin:$PATH" python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
+assert_eq 0 "$rc" "7b. stale red then green → debounced to green (exit 0)"
+assert_contains 'ok, all good' "$out" "7b. one stale read never produces a false red verdict"
 
 # 9. engagement: a branch is watched only if THIS session pushed it (no opt-in file needed)
 d="$ROOT/eng"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
