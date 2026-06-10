@@ -19,6 +19,10 @@ need_claude(){ [ -n "$CLAUDE" ] || die "claude not found (set CRS_CLAUDE_BIN)"; 
 need_script(){ command -v script >/dev/null 2>&1 || die "script(1) not found"; }
 spawn_get(){ sed -n "s/^$2=//p" "$STATE_DIR/$1.spawn" 2>/dev/null | head -1; }
 is_running(){ [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+# liveness = the real PTY/claude process, NOT the wrapper subshell: the subshell is kept alive by
+# session_stdin's immortal `tail -f /dev/null`, so it would always look "live". Trailing space anchors
+# the name (launch always passes args after it) so 'alpha' ≠ 'alphabet'.
+session_alive(){ pgrep -f "remote-control $1 " >/dev/null 2>&1; }
 
 if   [ -x "$CLAUDE_BIN" ];               then CLAUDE="$CLAUDE_BIN"
 elif command -v claude >/dev/null 2>&1;  then CLAUDE="claude"
@@ -39,13 +43,18 @@ launch_session(){
   local name="$1" cwd="$2"; shift 2
   local log="$STATE_DIR/$name.log"
   cd "$cwd" || die "cannot cd to $cwd"
+  # set -m puts the backgrounded subshell in its own process group (pgid == leader pid == $!), so
+  # `stop` can kill the WHOLE tree — the immortal `tail -f /dev/null` included — with one signal.
+  set -m
   case "$(uname -s)" in
     Darwin) ( export TERM=xterm-256color; session_stdin "$log" | script -q "$log" "$CLAUDE" --remote-control "$name" "$@" $PERM ) >/dev/null 2>&1 & ;;
     Linux)  local cmd; printf -v cmd '%q ' "$CLAUDE" --remote-control "$name" "$@" $PERM
             ( export TERM=xterm-256color; session_stdin "$log" | script -qec "$cmd" "$log" ) >/dev/null 2>&1 & ;;
-    *)      die "unsupported OS $(uname -s)" ;;
+    *)      set +m; die "unsupported OS $(uname -s)" ;;
   esac
-  printf 'name=%s\ncwd=%s\nstarted=%s\nsubshell=%s\n' "$name" "$cwd" "$(date -u +%FT%TZ)" "$!" >"$STATE_DIR/$name.spawn"
+  local leader=$!
+  set +m
+  printf 'name=%s\ncwd=%s\nstarted=%s\nsubshell=%s\npgid=%s\n' "$name" "$cwd" "$(date -u +%FT%TZ)" "$leader" "$leader" >"$STATE_DIR/$name.spawn"
 }
 
 slugify(){ printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-48 | sed 's/-*$//'; }
@@ -138,7 +147,7 @@ case "$cmd" in
     if [ ${#spawns[@]} -eq 0 ]; then echo "(no sessions)"; exit 0; fi
     for s in "${spawns[@]}"; do
       n="$(basename "$s" .spawn)"
-      state="dead"; if is_running "$(spawn_get "$n" subshell)"; then state="live"; fi
+      state="dead"; if session_alive "$n"; then state="live"; fi
       ri="$(spawn_get "$n" resumed)"; ri="${ri:+  resumed=$ri}"
       mi="$(spawn_get "$n" model)"; mi="${mi:+  model=$mi}"
       printf '%-22s %-6s started=%s  cwd=%s%s%s\n' "$n" "$state" "$(spawn_get "$n" started)" "$(spawn_get "$n" cwd)" "$ri" "$mi"
@@ -147,8 +156,13 @@ case "$cmd" in
   stop)
     name="$(slugify "${1:-}")"; [ -n "$name" ] || die "stop needs a <name>"
     [ -f "$STATE_DIR/$name.spawn" ] || die "no session $name"
-    sp="$(spawn_get "$name" subshell)"
-    if is_running "$sp"; then pkill -P "$sp" 2>/dev/null || true; kill "$sp" 2>/dev/null || true; fi
+    pgid="$(spawn_get "$name" pgid)"
+    if [ -n "$pgid" ]; then
+      kill -- -"$pgid" 2>/dev/null || true          # whole process group: subshell, script/claude, the tail
+    else                                              # pre-pgid .spawn: best-effort fallback
+      sp="$(spawn_get "$name" subshell)"
+      if is_running "$sp"; then pkill -P "$sp" 2>/dev/null || true; kill "$sp" 2>/dev/null || true; fi
+    fi
     # trailing space anchors the name (launch always passes args after it) so 'alpha' ≠ 'alphabet'
     pkill -f "remote-control $name " 2>/dev/null || true
     rm -f "$STATE_DIR/$name.spawn" "$STATE_DIR/$name.log"

@@ -226,6 +226,17 @@ clear_cache
 assert_contains 'no cached SSO token' "$(python3 "$SSO" status dev)" "18c. status → no token"
 assert_contains 'not an SSO profile' "$(python3 "$SSO" status plain)" "18d. status → non-SSO profile"
 
+# 18e. several cache files for one portal → the FRESHEST token wins; a leftover expired one
+# must never mask a valid one (a false "expired" would force a needless re-login), any glob order
+clear_cache
+printf '{"startUrl":"https://my.awsapps.com/start","accessToken":"old","expiresAt":"%s"}\n' "$(now_plus -3600)" > "$CACHE/stale.json"
+printf '{"startUrl":"https://my.awsapps.com/start","accessToken":"new","expiresAt":"%s"}\n' "$(now_plus 36000)" > "$CACHE/zzz_fresh.json"
+assert_contains 'valid until' "$(python3 "$SSO" status dev)" "18e. freshest of several cache files wins (no false expired)"
+clear_cache
+printf '{"startUrl":"https://my.awsapps.com/start","accessToken":"new","expiresAt":"%s"}\n' "$(now_plus 36000)" > "$CACHE/aaa_fresh.json"
+printf '{"startUrl":"https://my.awsapps.com/start","accessToken":"old","expiresAt":"%s"}\n' "$(now_plus -3600)" > "$CACHE/zzz_stale.json"
+assert_contains 'valid until' "$(python3 "$SSO" status dev)" "18e. order-independent: stale-first still resolves valid"
+
 # 19. CLI usage contract: unknown/blank subcommand → usage on stderr, exit 2
 out=$(python3 "$SSO" bogus 2>&1); rc=$?
 assert_contains 'usage: sso-auth.py' "$out" "19a. unknown subcommand → usage"

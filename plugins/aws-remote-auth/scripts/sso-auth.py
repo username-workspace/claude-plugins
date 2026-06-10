@@ -105,8 +105,12 @@ def resolve_sso(profile, profiles=None, sessions=None, _seen=None):
 
 
 def token_expiry(start_url):
+    # The same portal can have several cache files (legacy startUrl-hash + sso_session-name-hash,
+    # or stale tokens never pruned). Take the FRESHEST match, not the first one the glob yields,
+    # so a leftover expired token never masks a valid one (which would force a needless re-login).
     if not SSO_CACHE.is_dir():
         return None
+    best = None
     for f in SSO_CACHE.glob("*.json"):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -116,10 +120,12 @@ def token_expiry(start_url):
         if cached and cached.rstrip("/") == start_url.rstrip("/") and data.get("accessToken") and data.get("expiresAt"):
             raw = data["expiresAt"].replace("Z", "+00:00")
             try:
-                return datetime.fromisoformat(raw)
+                exp = datetime.fromisoformat(raw)
             except ValueError:
-                return None
-    return None
+                continue
+            if best is None or exp > best:
+                best = exp
+    return best
 
 
 def is_valid(start_url):

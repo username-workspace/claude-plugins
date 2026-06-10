@@ -72,11 +72,14 @@ def detect_repos(root):
 
 
 def default_branch(repo_path):
+    """(branch, is_fallback). When origin/HEAD is unset we fall back to the CURRENT branch — which,
+    on a feature checkout, makes WIP commits read as delivered. The caller warns so the numbers are
+    never silently wrong."""
     head = run_git(repo_path, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).strip()
     if head:
-        return head  # e.g. "origin/main"
+        return head, False  # e.g. "origin/main"
     cur = run_git(repo_path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).strip()
-    return cur or "HEAD"
+    return (cur or "HEAD"), True
 
 
 def monday_of(d):
@@ -217,9 +220,12 @@ def main():
     all_commits = []
     sha_on_main = set()
     main_raw = {}
+    fallback_repos = []
     for repo in cfg["repos"]:
         rp = os.path.join(root, repo)
-        branch = default_branch(rp)
+        branch, is_fallback = default_branch(rp)
+        if is_fallback:
+            fallback_repos.append(repo)
         for c in collect_repo_commits(rp, since, until):
             c["repo"] = repo
             all_commits.append(c)
@@ -340,6 +346,12 @@ def main():
             weekly["fix_ratio"][name].append(round(wb["fix"] / cm * 100, 1) if cm > 0 else 0)
             weekly["utilization"][name].append(round(adm / wd * 100, 1) if wd > 0 else 0)
 
+    if fallback_repos:
+        print("WARN: no origin/HEAD in " + ", ".join(fallback_repos) + " — fell back to the current "
+              "branch as the default; on a feature checkout this counts WIP as delivered. Run "
+              "`git remote set-head origin -a` (or set repos in config) for accurate delivery numbers.",
+              file=sys.stderr)
+
     json.dump({
         "developers": developers,
         "weekly": weekly,
@@ -350,6 +362,7 @@ def main():
             "hidden_from_charts": sorted(cfg["exclude"]),
             "holidays": sorted(holidays),
             "availability": bool(holidays or cfg["leaves"]),
+            "default_branch_fallback": sorted(fallback_repos),
         },
     }, sys.stdout, ensure_ascii=False, indent=2)
 

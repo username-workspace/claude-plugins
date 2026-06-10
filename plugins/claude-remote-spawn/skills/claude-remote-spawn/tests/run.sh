@@ -120,8 +120,20 @@ rc="${out##*$'\n'}"
 body="${out%$'\n'*}"
 assert_eq 0 "$rc" "12. list (with session) → exit 0"
 assert_contains "alpha" "$body" "12. list shows session name"
-assert_contains "dead" "$body" "12. list marks non-running pid as dead"
+assert_contains "dead" "$body" "12. list marks a session with no live PTY process as dead"
 rm -f "$STATE/alpha.spawn"
+
+# 12b. liveness follows the REAL process, not the (tail-kept-alive) wrapper subshell
+( exec -a "remote-control livetest stub" sleep 30 ) & lpid=$!
+printf 'name=livetest\ncwd=/tmp\nstarted=x\nsubshell=%s\npgid=%s\n' "$lpid" "$lpid" > "$STATE/livetest.spawn"
+sleep 0.3
+lt=$(run_rc list); lt="${lt%$'\n'*}"; lt=$(printf '%s\n' "$lt" | grep livetest)
+case "$lt" in *live*) ok "12b. a running remote-control process → live";; *) ko "12b. expected live — got [$lt]";; esac
+kill "$lpid" 2>/dev/null; wait "$lpid" 2>/dev/null
+sleep 0.2
+lt=$(run_rc list); lt="${lt%$'\n'*}"; lt=$(printf '%s\n' "$lt" | grep livetest)
+case "$lt" in *dead*) ok "12b. process gone → dead (no tail-kept-alive false positive)";; *) ko "12b. expected dead — got [$lt]";; esac
+rm -f "$STATE/livetest.spawn"
 
 # 13. check → exit 0, reports stub claude version
 out=$(run_rc check)
@@ -211,6 +223,18 @@ assert_eq "outside-evil" "$handle" "22. hostile name slugified"
 sp="$(sed -n 's/^subshell=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
 [ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
 run stop "$handle" >/dev/null 2>&1 || true
+
+# 23. stop kills the WHOLE process group — the immortal `tail -f /dev/null` does not leak
+: > "$ROOT/script.cap"
+out=$(run spawn leaktest)
+handle="$(echo "$out" | head -1)"
+for _ in $(seq 1 50); do [ -s "$STATE/$handle.spawn" ] && break; sleep 0.1; done
+pg="$(sed -n 's/^pgid=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
+sleep 0.3
+{ [ -n "$pg" ] && pgrep -g "$pg" >/dev/null 2>&1; } && ok "23. spawn → its process group is populated" || ko "23. spawn → process group populated (pg=$pg)"
+run stop "$handle" >/dev/null 2>&1 || true
+sleep 0.3
+pgrep -g "$pg" >/dev/null 2>&1 && ko "23. group survived stop — tail/process leaked" || ok "23. stop kills the whole group (no tail leak)"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

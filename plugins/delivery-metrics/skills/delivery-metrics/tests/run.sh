@@ -319,6 +319,25 @@ else
   ok "21. missing args → exit 1"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 22. no origin/HEAD + feature checkout → fallback to current branch is WARNED, not silent
+# (otherwise WIP commits silently read as delivered)
+d="$ROOT/nohead"; git_init "$d" main
+commit_as "$d" Alice a@a.a 2026-01-05 "ZV-1 shipped" base
+git -C "$d" checkout -q -b feature/wip
+commit_as "$d" Alice a@a.a 2026-01-06 "ZV-2 wip" wip   # stays on feature/wip at collect time
+err=$(python3 "$COLLECT" "$d" 2026-01-01 2026-01-31 3m 2>&1 >/dev/null)
+assert_contains 'no origin/HEAD' "$err" "22. fallback emits a stderr warning"
+assert_contains 'WIP as delivered' "$err" "22. warning explains the risk"
+J="$(collect "$d" 2026-01-01 2026-01-31 3m)"
+assert_eq '["."]' "$(printf '%s' "$J" | get "json.dumps(o['metadata']['default_branch_fallback'])")" "22. fallback recorded in metadata"
+# a repo on main (origin/HEAD still absent but current branch IS the trunk) must not warn-as-error,
+# but it is still a fallback → also recorded; the warning is informational
+d2="$ROOT/onmain"; git_init "$d2" main
+commit_as "$d2" Bob b@b.b 2026-01-05 "ZV-3 x" x
+err2=$(python3 "$COLLECT" "$d2" 2026-01-01 2026-01-31 3m 2>&1 >/dev/null)
+assert_contains 'no origin/HEAD' "$err2" "22. on-main repo without origin/HEAD also warns (current=trunk, still a guess)"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"

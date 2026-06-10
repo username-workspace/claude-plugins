@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "claude-remote-spawn",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "description": "Spawn or resume a persistent, remote-controllable Claude Code session you can drive from your phone or desktop. PTY-backed, survives detached. Terminal-agnostic, cross-platform. Pick the session model with --model (any alias/id your claude accepts, passed straight to claude --model).",
       "source": "./plugins/claude-remote-spawn",
       "category": "development",
@@ -17,7 +17,7 @@
     },
     {
       "name": "aws-remote-auth",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./plugins/aws-remote-auth",
       "description": "On-demand AWS SSO re-authentication via device code (autofill link), with a PreToolUse hook that auto-detects expired sessions on aws commands. Generic across profiles and SSO portals.",
       "category": "development",
@@ -25,7 +25,7 @@
     },
     {
       "name": "delivery-metrics",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "source": "./plugins/delivery-metrics",
       "description": "Generate a developer productivity & quality report (interactive HTML dashboard) from git history — single repo or submodule workspace. Repo-agnostic and configurable.",
       "category": "development",
