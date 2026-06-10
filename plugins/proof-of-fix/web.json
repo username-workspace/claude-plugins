@@ -1,0 +1,14 @@
+{
+  "category": "Quality",
+  "tagline": "Prove the bug before fixing it — then prove the fix with the same probe. Red before, green after.",
+  "summary": "A fix you cannot demonstrate is a guess. proof-of-fix enforces the evidence-first loop: record the smallest probe that demonstrates the bug (accepted only if it FAILS), fix the root cause, then check — the exact same probe must now run green. It engages on its own: a bug-shaped prompt (en/fr) injects the protocol into context once per session per repo, and a Stop hook re-runs an open repro itself — auto-closing it on green with a one-line confirmation, handing the failing output back to the session on red (one attempt per work-state, capped, never a Stop loop). The recommended probe is a real test committed with the fix, so every repro becomes a permanent regression guard. State lives in .git and is never committed; opt out per repo.",
+  "capabilities": [
+    "record: runs the reproduction probe and REFUSES it if it exits 0 — a repro must fail before the fix, or it proves nothing",
+    "check: re-runs the exact same probe — the fix is proven only by a green run of the command that was red",
+    "Auto-engagement: bug/fix-shaped prompts (en + fr) inject the protocol as context, once per session per repo",
+    "Stop guard with real signals: an open repro is re-run by the hook itself — green auto-proves it, red blocks with the failing output (bounded per work-state, capped at 5)",
+    "Horizontal: any repo, any stack — the probe is whatever command demonstrates the bug; git + Python stdlib only"
+  ],
+  "commands": ["proof-of-fix"],
+  "platforms": ["macOS", "Linux"]
+}

@@ -5,7 +5,7 @@ Guardrails (never crossed): never commit or push the default branch (branch-firs
 feature branch; never merge; refuse to act on a detached/unborn HEAD or mid rebase/merge; no AI
 attribution in commits.
 """
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess, sys, time
 from shutil import which
 from urllib.parse import quote
 
@@ -22,6 +22,7 @@ DEFAULTS = {
     "default_base": None,
     "enabled": True,                  # set false to opt a repo OUT (engagement is otherwise automatic)
     "respect_merge_review": True,     # hold the PR until a sibling merge-review gate passes (if present)
+    "gate_timeout": 120,              # seconds before a gate run is declared timed out (never cached)
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
@@ -206,20 +207,52 @@ def detect_gate(repo, cfg):
             scripts = {}
         runner = "pnpm" if os.path.isfile(os.path.join(repo, "pnpm-lock.yaml")) else \
                  "bun" if os.path.isfile(os.path.join(repo, "bun.lock")) or os.path.isfile(os.path.join(repo, "bun.lockb")) else \
+                 "yarn" if os.path.isfile(os.path.join(repo, "yarn.lock")) else \
                  "npm run"
         for key in ("ts:check", "typecheck", "test", "lint"):
             if key in scripts:
                 return f"{runner} {key}".replace("npm run test", "npm test")
-    if os.path.isfile(os.path.join(repo, "composer.json")):
-        return "composer test"
+    cj = os.path.join(repo, "composer.json")
+    if os.path.isfile(cj):
+        try:
+            if "test" in ((json.load(open(cj)) or {}).get("scripts") or {}):
+                return "composer test"
+        except Exception:
+            pass
+    pyproject = os.path.join(repo, "pyproject.toml")
+    if os.path.isfile(os.path.join(repo, "pytest.ini")) or \
+       (os.path.isfile(pyproject) and "pytest" in read_text(pyproject)):
+        return "python3 -m pytest"
+    if os.path.isfile(os.path.join(repo, "go.mod")):
+        return "go test ./..."
+    if os.path.isfile(os.path.join(repo, "Cargo.toml")):
+        return "cargo test"
+    if re.search(r"^test:", read_text(os.path.join(repo, "Makefile")), re.M):
+        return "make test"
     return None
 
 
-def run_gate(repo, cmd):
+def read_text(path):
+    try:
+        return open(path, errors="ignore").read()
+    except OSError:
+        return ""
+
+
+def run_gate(repo, cmd, timeout=120):
+    """('pass'|'fail'|'skip'|'timeout', output tail, seconds) — the tail is persisted as evidence so a
+    red gate seen only inside a Stop hook is diagnosable after the fact."""
     if not cmd:
-        return "skip"
-    rc, _, _ = run(["bash", "-c", cmd], repo)
-    return "pass" if rc == 0 else "fail"
+        return "skip", "", 0.0
+    t0 = time.time()
+    try:
+        p = subprocess.run(["bash", "-c", cmd], cwd=repo, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"gate exceeded {timeout}s", round(time.time() - t0, 1)
+    except FileNotFoundError:
+        return "fail", "bash: not found", round(time.time() - t0, 1)
+    tail = ((p.stdout or "") + "\n" + (p.stderr or "")).strip()[-2000:]
+    return ("pass" if p.returncode == 0 else "fail"), tail, round(time.time() - t0, 1)
 
 
 def find_ticket(text, pattern):
@@ -431,6 +464,13 @@ def run_ladder(state, verdict, gate, cfg):
                 res["pr_url"] = pr_create_url(info, base, state["branch"])
     elif done and not gate_ok:
         res["blocked"].append("pr-withheld:gate-not-green")
+    elif not done and (verdict or {}).get("source") in ("marker", "todos"):
+        if gate == "fail":
+            res["blocked"].append("pr-withheld:gate-not-green")
+        elif gate == "timeout":
+            res["blocked"].append('pr-withheld:gate-timeout (raise "gate_timeout" in .git/ship-when-done.json)')
+        elif gate == "skip" and cfg["require_green_gate_for_pr"]:
+            res["blocked"].append('pr-withheld:no-gate-detected (set "gate" in .git/ship-when-done.json)')
 
     if not res["actions"]:
         res["skipped"] = "nothing-to-do"
@@ -667,6 +707,106 @@ def cmd_engaged(args):
     print("yes" if engaged(repo, load_config(repo, args.config), args.session) else "no")
 
 
+def gate_cache_path(repo):
+    return os.path.join(git_dir(repo), "swd-gate.json")
+
+
+def cached_gate(repo, cmd):
+    """Cache hit ONLY for a green verdict at this exact work-state + gate command. A red gate carries
+    no proof of determinism (timeout, flake, machine state) — caching it would pin a false red and
+    withhold the PR forever — so anything but 'pass' is re-run on the next Stop and self-heals."""
+    if not cmd:
+        return None
+    try:
+        d = json.load(open(gate_cache_path(repo)))
+    except Exception:
+        return None
+    head, dirty = work_state(repo)
+    if d.get("head") == head and d.get("dirty") == dirty and d.get("cmd") == cmd and d.get("verdict") == "pass":
+        return "pass"
+    return None
+
+
+def store_gate(repo, cmd, verdict, tail="", secs=0.0):
+    """Every gate run leaves evidence (verdict + output tail + duration), whatever the verdict — only
+    'pass' is ever read back as a cache hit."""
+    head, dirty = work_state(repo)
+    try:
+        json.dump({"head": head, "dirty": dirty, "cmd": cmd, "verdict": verdict,
+                   "tail": tail, "secs": secs},
+                  open(gate_cache_path(repo), "w"))
+    except OSError:
+        pass
+
+
+def review_block_allowed(repo, session):
+    """At most one review block per work-state, capped per session — a block-continuation that doesn't
+    converge ends the turn instead of looping the Stop hook forever."""
+    p = os.path.join(git_dir(repo), "swd-review-block.json")
+    head, dirty = work_state(repo)
+    try:
+        d = json.load(open(p))
+    except Exception:
+        d = {}
+    if d.get("session") != session:
+        d = {"session": session, "count": 0}
+    if d.get("head") == head and d.get("dirty") == dirty:
+        return False
+    if int(d.get("count", 0)) >= 5:
+        return False
+    try:
+        json.dump({"session": session, "head": head, "dirty": dirty, "count": int(d.get("count", 0)) + 1},
+                  open(p, "w"))
+    except OSError:
+        pass
+    return True
+
+
+def stamp_sibling(repo, fname, branch, session, entry):
+    """Hand engagement to a sibling plugin (merge-review / mr-watchdog) for work THIS session produced.
+    Their session file is the coupling point: absent → the plugin isn't active here, do nothing."""
+    p = os.path.join(git_dir(repo), fname)
+    if not os.path.isfile(p):
+        return
+    try:
+        st = json.load(open(p))
+    except Exception:
+        return
+    if st.get("session") != session:
+        st["session"] = session
+        st["branches"] = {}
+    st.setdefault("branches", {})[branch] = dict(st.get("branches", {}).get(branch) or {}, **entry)
+    try:
+        json.dump(st, open(p, "w"))
+    except OSError:
+        pass
+
+
+def watchdog_handoff(repo, session):
+    """Right after opening the PR, ask the sibling mr-watchdog (via the script path its baseline stamped)
+    whether to nudge the session to launch the CI watcher — same turn, no Stop-hook race. The forge may
+    not have registered the new PR's checks yet (status 'none' for a few seconds), so a silent first
+    answer is retried once."""
+    try:
+        script = json.load(open(os.path.join(git_dir(repo), "mr-watchdog-session.json"))).get("script")
+    except Exception:
+        return None
+    if not script or not os.path.isfile(script):
+        return None
+    for attempt in (0, 1):
+        try:
+            r = subprocess.run([sys.executable, script, "hook", "--repo", repo, "--session", session],
+                               capture_output=True, text=True, timeout=30)
+            d = json.loads(r.stdout.strip() or "{}")
+            if d.get("decision") == "block":
+                return d.get("reason")
+        except Exception:
+            return None
+        if attempt == 0:
+            time.sleep(4)
+    return None
+
+
 def cmd_engage(args):
     if os.environ.get("SHIP_WHEN_DONE_EVAL"):
         return
@@ -681,20 +821,45 @@ def cmd_engage(args):
         return
     if not state["dirty"] and state["ahead_of_base"] == 0:
         return
-    gate = run_gate(repo, detect_gate(repo, cfg))
+    gate_cmd = detect_gate(repo, cfg)
+    gate = cached_gate(repo, gate_cmd)
+    gate_tail, gate_secs, gate_ran = "", 0.0, False
+    if gate is None:
+        gate, gate_tail, gate_secs = run_gate(repo, gate_cmd, int(cfg.get("gate_timeout", 120)))
+        gate_ran = True
     verdict = evaluate_completion(state, gate, cfg, args.last_message or "", args.todos_done)
     res = run_ladder(state, verdict, gate, cfg)
-    if any(a.startswith("pr:draft") or a.startswith("pr:ready") or a == "pr:gitlab-mr" for a in res["actions"]):
+    if gate_cmd and gate_ran:
+        store_gate(repo, gate_cmd, gate, gate_tail, gate_secs)
+    branch = res.get("branch")
+    acts = res["actions"]
+    if branch:
+        if "commit" in acts or any(a.startswith("branched:") for a in acts):
+            stamp_sibling(repo, "swd-session.json", branch, args.session, {"engaged": True})
+            stamp_sibling(repo, "merge-review-session.json", branch, args.session, {"engaged": True})
+        if "push" in acts:
+            stamp_sibling(repo, "mr-watchdog-session.json", branch, args.session, {"engaged": True})
+    created = any(a.startswith("pr:draft") or a.startswith("pr:ready") or a == "pr:gitlab-mr" for a in acts)
+    if created:
         clear_marker(repo)
+    out = {}
     if "push-held:merge-review-pending" in res["blocked"]:
-        print(json.dumps({"decision": "block", "reason": review_block_reason()}))
-        return
-    summary = " · ".join(res["actions"]) or res.get("skipped") or "no-op"
+        if review_block_allowed(repo, args.session):
+            out = {"decision": "block", "reason": review_block_reason()}
+    elif created:
+        nudge = watchdog_handoff(repo, args.session)
+        if nudge:
+            out = {"decision": "block", "reason": nudge}
+    summary = " · ".join(acts) or res.get("skipped") or "no-op"
     line = f"[ship-when-done] {summary}" + (f"  (withheld: {', '.join(res['blocked'])})" if res["blocked"] else "")
     link = res.get("pr") or res.get("pr_url")
     if link:
         line += f"\n  → {link}"
-    print(line)
+    if out or link or res["blocked"]:
+        out["systemMessage"] = line
+        print(json.dumps(out))
+    else:
+        print(line)
 
 
 def cmd_mark_done(args):
@@ -712,7 +877,7 @@ def main():
     s = sub.add_parser("state"); s.add_argument("--repo", default="."); s.set_defaults(fn=cmd_state)
     l = sub.add_parser("ladder")
     l.add_argument("--repo", default="."); l.add_argument("--config"); l.add_argument("--goal", default="")
-    l.add_argument("--verdict"); l.add_argument("--gate", default="skip", choices=["pass", "fail", "skip"])
+    l.add_argument("--verdict"); l.add_argument("--gate", default="skip", choices=["pass", "fail", "skip", "timeout"])
     l.set_defaults(fn=cmd_ladder)
     e = sub.add_parser("engage")
     e.add_argument("--repo", default="."); e.add_argument("--config"); e.add_argument("--goal", default="")

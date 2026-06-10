@@ -194,15 +194,16 @@ assert_eq "" "$(STUB_CI=none python3 "$WATCH" hook --repo "$d" --session S)" "11
 assert_eq "" "$(STUB_CI=pending STUB_MR_STATE=CLOSED python3 "$WATCH" hook --repo "$d" --session S)" "11. no open MR → silent"
 
 # 12. Stop-hook plumbing: resolves the repo, gated on engagement; emits the launch block; re-entrancy
-HOOK="$(cd "$(dirname "$WATCH")/../../.." && pwd)/hooks/stop-hook.py"
+PLUGIN="$(cd "$(dirname "$WATCH")/../../.." && pwd)"
+HOOK="$PLUGIN/hooks/stop-hook.py"
 d="$ROOT/sh"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
 python3 "$WATCH" baseline --repo "$d" --session X >/dev/null
-out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_CI=pending python3 "$HOOK" 2>/dev/null)
+out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_CI=pending CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK" 2>/dev/null)
 assert_eq "" "$out" "12. not engaged (no push this session) → Stop hook silent"
 echo z>"$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
-out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_CI=pending python3 "$HOOK" 2>/dev/null)
+out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_CI=pending CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK" 2>/dev/null)
 assert_contains '"decision": "block"' "$out" "12. engaged + open MR + CI running → Stop hook emits the launch block"
-out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":true}" | STUB_CI=pending python3 "$HOOK" 2>/dev/null)
+out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":true}" | STUB_CI=pending CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK" 2>/dev/null)
 assert_eq "" "$out" "12. re-entrancy: stop_hook_active → hook silent"
 
 # 13. resolve: active repo (subdir / push command / transcript), root-anchored

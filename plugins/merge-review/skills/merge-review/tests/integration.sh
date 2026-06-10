@@ -22,7 +22,7 @@ echo "merge-review · real hooks"
 
 d="$ROOT/repo"; mkrepo "$d"; git -C "$d" checkout -q -b feat
 # 1. UserPromptSubmit baseline, then the session does work
-echo "{\"cwd\":\"$d\",\"session_id\":\"itest\"}" | "$PY" "$PROMPT"
+echo "{\"cwd\":\"$d\",\"session_id\":\"itest\"}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PY" "$PROMPT"
 [ -f "$d/.git/merge-review-session.json" ] && ok "prompt-hook: stamped the session baseline" || ko "prompt-hook baseline"
 echo "feature code" >> "$d/app.txt"; git -C "$d" add -A; git -C "$d" commit -qm "feat: add"
 
@@ -50,13 +50,13 @@ NT="{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"x\"},\"cwd\":\"$d\",
 
 # 7. a session that produced no work is never gated
 d2="$ROOT/repo2"; mkrepo "$d2"; git -C "$d2" checkout -q -b feat
-echo "{\"cwd\":\"$d2\",\"session_id\":\"itest\"}" | "$PY" "$PROMPT"   # baseline only, no work
+echo "{\"cwd\":\"$d2\",\"session_id\":\"itest\"}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PY" "$PROMPT"   # baseline only, no work
 P2="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push -u origin feat\"},\"cwd\":\"$d2\",\"session_id\":\"itest\"}"
 [ -z "$(echo "$P2" | "$PY" "$PREPUSH")" ] && ok "prepush-hook: no work this session → not gated" || ko "prepush no-work"
 
 # 8. a branch DELETION is never gated, even on an engaged+unreviewed head (a real push there would deny)
 d3="$ROOT/repo3"; mkrepo "$d3"; git -C "$d3" checkout -q -b feat
-echo "{\"cwd\":\"$d3\",\"session_id\":\"itest\"}" | "$PY" "$PROMPT"
+echo "{\"cwd\":\"$d3\",\"session_id\":\"itest\"}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PY" "$PROMPT"
 echo w >> "$d3/x.txt"; git -C "$d3" add -A; git -C "$d3" commit -qm w   # engaged, HEAD unreviewed
 DEL="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git -C $d3 push origin --delete feat\"},\"cwd\":\"$d3\",\"session_id\":\"itest\"}"
 [ -z "$(echo "$DEL" | "$PY" "$PREPUSH")" ] && ok "prepush-hook: branch deletion (--delete) → never gated" || ko "prepush delete"

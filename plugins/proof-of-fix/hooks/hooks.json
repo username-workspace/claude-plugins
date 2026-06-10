@@ -17,8 +17,8 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.py\"",
-            "timeout": 300,
-            "statusMessage": "ship-when-done: commit / push / draft-PR if ready…"
+            "timeout": 180,
+            "statusMessage": "proof-of-fix: re-running the recorded repro…"
           }
         ]
       }

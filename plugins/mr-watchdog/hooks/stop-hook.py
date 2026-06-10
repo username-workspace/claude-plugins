@@ -19,8 +19,6 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return
-    if payload.get("stop_hook_active"):
-        return
     session = payload.get("session_id") or ""
     root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     script = os.path.join(root, "skills", "mr-watchdog", "scripts", "watch.py")

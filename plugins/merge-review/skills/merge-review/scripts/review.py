@@ -231,19 +231,25 @@ def write_session(repo, data):
 
 
 def cmd_baseline(args):
-    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows."""
+    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows.
+    The session file is also the presence marker siblings couple on (ship-when-done holds a push while it
+    exists and the HEAD has no passing review) — so it is written for any branch of a repo with a remote,
+    including the trunk, where branch-first work starts."""
     repo = os.path.abspath(args.repo)
     cfg = load_config(repo, args.config)
-    branch = feature_branch(repo, cfg)
-    if not branch:
+    if not cfg.get("enabled", True) or not cfg.get("prepush_gate", True):
+        return
+    if not cur_branch(repo) or not remote_name(repo):
         return
     st = read_session(repo)
     if not st or st.get("session") != args.session:
         st = {"session": args.session, "branches": {}}
-    if branch not in st["branches"]:
+    st["script"] = os.path.abspath(__file__)
+    branch = feature_branch(repo, cfg)
+    if branch and branch not in st["branches"]:
         head, dirty = work_state(repo)
         st["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
-        write_session(repo, st)
+    write_session(repo, st)
 
 
 def engaged(repo, cfg, session):
