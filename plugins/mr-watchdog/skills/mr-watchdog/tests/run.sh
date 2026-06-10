@@ -211,4 +211,17 @@ assert_contains '"decision": "block"' "$out" "12. engaged → Stop hook emits th
 mkneed; mkeng; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":true}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
 assert_eq "" "$out" "12. re-entrancy: stop_hook_active → hook silent (no infinite block loop)"
 
+# 13. resolve: active repo (subdir / push command / transcript), root-anchored
+rr="$ROOT/r13"; new_repo "$rr"   # on branch feat, with origin
+rsub="$rr/a/b/c"; mkdir -p "$rsub"; rtop="$(git -C "$rr" rev-parse --show-toplevel)"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --cwd "$rsub")" "13. resolve: deep subdir → repo root"
+rnr="$ROOT/r13-nr"; mkdir -p "$rnr"
+assert_eq "" "$(python3 "$WATCH" resolve --cwd "$rnr")" "13. resolve: non-repo cwd → empty"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --command "git -C $rr push origin feat")" "13. resolve: git -C X push → X root"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --command "cd $rr && git push")" "13. resolve: cd X && git push → X root"
+rtp="$ROOT/r13.jsonl"; printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/app.txt"}}]}}\n' "$rsub" > "$rtp"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --cwd "$rnr" --transcript "$rtp")" "13. resolve: transcript last-edit → its repo root"
+python3 "$WATCH" baseline --repo "$rsub" --session s1
+[ -f "$rtop/.git/mr-watchdog-session.json" ] && ok "13. root-anchor: baseline from subdir → state at repo root" || ko "13. root-anchor subdir"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

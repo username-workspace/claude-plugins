@@ -381,6 +381,19 @@ assert_contains 'bitbucket.org' "$out" "30. the surfaced URL is the bitbucket on
 out2=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)             # turn 3: tip unchanged
 assert_absent 'pr-url' "$out2" "30. third turn (tip unchanged) does NOT re-nag"
 
+# 31. resolve: active repo (subdir / push command / transcript), root-anchored
+rr="$ROOT/t31"; new_repo "$rr" --remote; git -C "$rr" checkout -q -b feat
+sub="$rr/a/b/c"; mkdir -p "$sub"; rtop="$(git -C "$rr" rev-parse --show-toplevel)"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$sub")" "31. resolve: deep subdir → repo root"
+nr="$ROOT/t31-nr"; mkdir -p "$nr"
+assert_eq "" "$(python3 "$SHIP" resolve --cwd "$nr")" "31. resolve: non-repo cwd → empty"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "git -C $rr push origin feat")" "31. resolve: git -C X push → X root"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "cd $rr && git push")" "31. resolve: cd X && git push → X root"
+tpr="$ROOT/t31.jsonl"; printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s/app.txt"}}]}}\n' "$sub" > "$tpr"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$nr" --transcript "$tpr")" "31. resolve: transcript last-edit → its repo root"
+python3 "$SHIP" baseline --repo "$sub" --session s1
+[ -f "$rtop/.git/swd-session.json" ] && ok "31. root-anchor: baseline from subdir → state at repo root" || ko "31. root-anchor subdir"
+
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
 

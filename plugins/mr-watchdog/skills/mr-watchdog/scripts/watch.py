@@ -268,6 +268,81 @@ def read_status(repo):
         return None
 
 
+# --- active-repo resolution: the repo we're working in (not the launch dir), root-anchored ---------
+
+def git_toplevel(path):
+    if not path:
+        return None
+    rc, top, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], ".")
+    return top if rc == 0 and top else None
+
+
+def repo_root(path):
+    ap = os.path.abspath(path or ".")
+    return git_toplevel(ap) or ap
+
+
+def repo_from_command(cmd):
+    m = re.search(r"\bgit\b[^&|;]*?\s-C\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "") \
+        or re.search(r"(?:^|&&|;|\|)\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "")
+    return m.group(1).strip("\"'") if m else None
+
+
+def last_edited_file(tp):
+    if not tp or not os.path.isfile(tp):
+        return None
+    last, edits = None, {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
+    try:
+        for line in open(tp, errors="ignore"):
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("type") != "assistant":
+                continue
+            content = (d.get("message") or {}).get("content")
+            if isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in edits:
+                        inp = b.get("input") or {}
+                        fp = inp.get("file_path") or inp.get("notebook_path")
+                        if fp:
+                            last = fp
+    except Exception:
+        return None
+    return last
+
+
+def resolve_repo(cwd, transcript, command):
+    """The git repo root we're actually working in: the one named in a push command, else the cwd's
+    repo, else the repo of the most-recently edited file. None when no git repo is in scope."""
+    if command:
+        p = repo_from_command(command)
+        if p:
+            if not os.path.isabs(p) and cwd:
+                p = os.path.join(cwd, p)
+            r = git_toplevel(p)
+            if r:
+                return r
+    if cwd:
+        r = git_toplevel(cwd)
+        if r:
+            return r
+    if transcript:
+        f = last_edited_file(transcript)
+        if f:
+            r = git_toplevel(os.path.dirname(f))
+            if r:
+                return r
+    return None
+
+
+def cmd_resolve(args):
+    r = resolve_repo(args.cwd, args.transcript, args.command)
+    if r:
+        print(r)
+
+
 # --- session engagement: only watch a branch THIS session pushed (so its pipeline is ours) ----------
 
 def upstream_sha(repo):
@@ -637,7 +712,14 @@ def main():
         s.add_argument("--session", default="")
         s.add_argument("--verbose", action="store_true")
         s.set_defaults(fn=fn)
+    rv = sub.add_parser("resolve")
+    rv.add_argument("--cwd", default="")
+    rv.add_argument("--transcript", default="")
+    rv.add_argument("--command", default="")
+    rv.set_defaults(fn=cmd_resolve)
     args = ap.parse_args()
+    if getattr(args, "repo", None) is not None:
+        args.repo = repo_root(args.repo)
     args.fn(args)
 
 
