@@ -21,6 +21,7 @@ DEFAULTS = {
     "goal": "",
     "default_base": None,
     "enabled": True,                  # set false to opt a repo OUT (engagement is otherwise automatic)
+    "respect_merge_review": True,     # hold the PR until a sibling merge-review gate passes (if present)
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
@@ -232,6 +233,21 @@ def build_commit_message(cfg, state, verdict):
     return f"{base}\n\nRefs: {ticket}" if ticket else base
 
 
+def review_gate_pending(repo):
+    """True when a sibling merge-review gate is active for this repo (its session file is present) but
+    has not passed the current HEAD — so we hold the PR. Loose coupling via merge-review's .git state
+    files; if it isn't active here this is always False and ship behaves exactly as before."""
+    gd = git_dir(repo)
+    if not os.path.isfile(os.path.join(gd, "merge-review-session.json")):
+        return False
+    try:
+        st = json.load(open(os.path.join(gd, "merge-review-state.json")))
+    except Exception:
+        return True
+    rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
+    return not (st.get("passed") and st.get("head") == (head if rc == 0 else None))
+
+
 def run_ladder(state, verdict, gate, cfg):
     """Run the commit → push → PR ladder under the guardrails. Returns what it did."""
     res = {"actions": [], "blocked": [], "skipped": None, "branch": state.get("branch"), "commit_message": None}
@@ -287,7 +303,8 @@ def run_ladder(state, verdict, gate, cfg):
     mode = cfg["on_done"]
     done = bool((verdict or {}).get("done"))
     gate_ok = (gate == "pass") or (not cfg["require_green_gate_for_pr"] and gate != "fail")
-    want_pr = done and gate_ok and remote and not state["on_default"] and ahead > 0
+    review_pending = cfg.get("respect_merge_review", True) and review_gate_pending(repo)
+    want_pr = done and gate_ok and not review_pending and remote and not state["on_default"] and ahead > 0
     info = parse_remote(remote_url(repo, remote)) if remote else None
     forge = cfg.get("forge") or (info["forge"] if info else "unknown")
     strategy = pr_strategy(forge)
@@ -351,6 +368,8 @@ def run_ladder(state, verdict, gate, cfg):
                 res["pr_url"] = pr_create_url(info, base, state["branch"])
     elif done and not gate_ok:
         res["blocked"].append("pr-withheld:gate-not-green")
+    elif done and review_pending:
+        res["blocked"].append("pr-withheld:merge-review-pending")
 
     if not res["actions"]:
         res["skipped"] = "nothing-to-do"
@@ -608,6 +627,8 @@ def cmd_engage(args):
         clear_marker(repo)
     summary = " · ".join(res["actions"]) or res.get("skipped") or "no-op"
     line = f"[ship-when-done] {summary}" + (f"  (withheld: {', '.join(res['blocked'])})" if res["blocked"] else "")
+    if "pr-withheld:merge-review-pending" in res["blocked"]:
+        line += "\n  → run /merge-review to clear the gate; the PR opens once it passes"
     link = res.get("pr") or res.get("pr_url")
     if link:
         line += f"\n  → {link}"

@@ -90,9 +90,15 @@ No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
   "judge_command": null,        // optional independent judge — YOUR own (API-keyed) command; off by default
   "skip_marker": "wip/",
   "forge": null,                 // github | gitlab | bitbucket — auto-detected from the remote unless set
-  "default_base": null           // PR/MR target branch — defaults to the remote's default branch
+  "default_base": null,          // PR/MR target branch — defaults to the remote's default branch
+  "respect_merge_review": true   // hold the PR until a sibling merge-review gate passes (if one is active)
 }
 ```
+
+If the **merge-review** plugin is active in the same repo, ship-when-done still commits and pushes the
+branch (anti-loss), but **withholds the PR** until merge-review has passed the current HEAD — surfacing
+`pr-withheld:merge-review-pending`. Run `/merge-review`; once it records a pass, the next milestone opens
+the PR. Loose coupling via merge-review's `.git` state — absent, this is inert.
 
 ## Manual / debug
 

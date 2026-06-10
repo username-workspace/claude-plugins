@@ -394,6 +394,21 @@ assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$nr" --transcript "$tpr")" "
 python3 "$SHIP" baseline --repo "$sub" --session s1
 [ -f "$rtop/.git/swd-session.json" ] && ok "31. root-anchor: baseline from subdir → state at repo root" || ko "31. root-anchor subdir"
 
+# 32. merge-review composition: hold the PR until the sibling gate passes (anti-loss push preserved)
+d="$ROOT/t32"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"
+printf '{"session":"s","branches":{}}' > "$d/.git/merge-review-session.json"   # merge-review active, no pass yet
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'pr-withheld:merge-review-pending' "$out" "32. merge-review active + unreviewed → PR withheld"
+assert_absent 'pr:draft' "$out" "32. no PR opened while the review is pending"
+assert_contains 'push' "$out" "32. branch still pushed (anti-loss preserved)"
+H=$(git -C "$d" rev-parse HEAD)
+printf '{"head":"%s","passed":true}' "$H" > "$d/.git/merge-review-state.json"
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'pr:' "$out" "32. review passed for this HEAD → PR opens"
+# 32b. no merge-review session file → gate inert, PR opens as before (graceful degradation)
+d="$ROOT/t32b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"
+assert_contains 'pr:' "$(ladder "$d" '{"done":true}' pass)" "32b. merge-review absent → PR opens (no coupling)"
+
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
 
