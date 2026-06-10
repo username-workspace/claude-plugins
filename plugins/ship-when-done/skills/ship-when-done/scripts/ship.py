@@ -784,20 +784,27 @@ def stamp_sibling(repo, fname, branch, session, entry):
 
 def watchdog_handoff(repo, session):
     """Right after opening the PR, ask the sibling mr-watchdog (via the script path its baseline stamped)
-    whether to nudge the session to launch the CI watcher — same turn, no Stop-hook race."""
+    whether to nudge the session to launch the CI watcher — same turn, no Stop-hook race. The forge may
+    not have registered the new PR's checks yet (status 'none' for a few seconds), so a silent first
+    answer is retried once."""
     try:
         script = json.load(open(os.path.join(git_dir(repo), "mr-watchdog-session.json"))).get("script")
     except Exception:
         return None
     if not script or not os.path.isfile(script):
         return None
-    try:
-        r = subprocess.run([sys.executable, script, "hook", "--repo", repo, "--session", session],
-                           capture_output=True, text=True, timeout=30)
-        d = json.loads(r.stdout.strip() or "{}")
-        return d.get("reason") if d.get("decision") == "block" else None
-    except Exception:
-        return None
+    for attempt in (0, 1):
+        try:
+            r = subprocess.run([sys.executable, script, "hook", "--repo", repo, "--session", session],
+                               capture_output=True, text=True, timeout=30)
+            d = json.loads(r.stdout.strip() or "{}")
+            if d.get("decision") == "block":
+                return d.get("reason")
+        except Exception:
+            return None
+        if attempt == 0:
+            time.sleep(4)
+    return None
 
 
 def cmd_engage(args):

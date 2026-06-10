@@ -194,4 +194,21 @@ assert_eq "$((before + 1))" "$(pr_creates)" "10b. healed gate → the PR opens w
 python3 "$SHIP" engage --repo "$d" --session sb >/dev/null 2>&1
 assert_eq 2 "$(wc -l < "$ROOT/gate10b.log" | tr -d ' ')" "10b. green verdict IS cached → no re-run on the next idle Stop"
 
+# --- 11. watchdog handoff survives the forge's check-registration window (silent first answer) ------
+d="$ROOT/b11"; new_repo "$d"
+cat > "$ROOT/fakewatch.py" <<EOF
+import json, os
+flag = os.path.join("$ROOT", "b11-second-call")
+if os.path.exists(flag):
+    print(json.dumps({"decision": "block", "reason": "launch run --repo X with run_in_background"}))
+else:
+    open(flag, "w").write("x")
+EOF
+printf '{"session":"s11","script":"%s","branches":{}}' "$ROOT/fakewatch.py" > "$d/.git/mr-watchdog-session.json"
+out=$(python3 -c "
+import importlib.util as u
+sp = u.spec_from_file_location('ship', '$SHIP'); m = u.module_from_spec(sp); sp.loader.exec_module(m)
+print(m.watchdog_handoff('$d', 's11') or 'NONE')")
+assert_contains 'run_in_background' "$out" "11. silent first answer (checks not registered yet) → retried, nudge captured"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]
