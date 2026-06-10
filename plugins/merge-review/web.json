@@ -1,0 +1,14 @@
+{
+  "category": "DevOps",
+  "tagline": "An adversarial reviewer that scores the diff, fixes what's attested, and loops until it's merge-ready.",
+  "summary": "A merge-readiness reviewer that proves code is production-ready instead of assuming it. It scores the diff 0-100 across security, correctness, quality and maintainability with strict deductions, and runs iteratively — the score climbs as findings are genuinely addressed. Two outcome modes make the difference: LOCAL (interactive) re-derives every finding, applies the attested ones (high-confidence, file:line-cited, root-cause) and loops until the score clears the threshold; contestable pure-logic findings are surfaced for you to arbitrate, never silently patched. REMOTE (diff injected by a CI/bot runner) is strictly read-only — it emits the verdict and a machine-readable state block, touches nothing. An asymmetric trust model treats the diff, descriptions and comments as untrusted data that may only raise scrutiny, never lower the verdict. Forge-agnostic context (gh/glab). The review step that sits between ship-when-done and mr-watchdog.",
+  "capabilities": [
+    "Adversarial 0-100 score across security, correctness, quality, maintainability — with itemised, file:line-cited deductions and a configurable threshold (default 80)",
+    "Iterative & history-aware: reconciles against the prior pass (stable finding identity, not line numbers) so the score reflects the current code and climbs as feedback is addressed",
+    "LOCAL mode auto-fixes the attested findings (high-confidence, cited) at the root cause and loops until viable; contestable logic findings are surfaced, never silently applied",
+    "REMOTE mode is read-only: diff injected by the runner, emits verdict + machine-readable state, never commits/pushes/posts",
+    "Self-engaging & session-scoped pre-push gate: reviews the branch THIS session is about to push (never a stale or someone else's); a fake-green guard blocks deleted/weakened tests, --no-verify, || true, lowered thresholds; opt out per repo"
+  ],
+  "commands": ["merge-review"],
+  "platforms": ["macOS", "Linux"]
+}

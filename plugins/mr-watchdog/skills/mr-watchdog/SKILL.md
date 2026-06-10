@@ -1,61 +1,61 @@
 ---
 name: mr-watchdog
 description: >-
-  Triggered by an open merge request, a detached background watchdog monitors the MR's remote CI —
-  read-only: it never commits, pushes, or merges. On a red pipeline it fetches the failing job log and,
-  by default (`on_red: "fix"`), continues your interactive session to fix the *root cause* (no bypass),
-  or just surfaces it (`on_red: "notify"`). `verify` lets that session self-check its fix for fake-green
-  (deleted/weakened tests, --no-verify, || true, lowered thresholds) before committing. Opt-in per
-  repo. Forge-agnostic (GitHub via gh, GitLab via glab). The sequel to ship-when-done.
+  Triggered by an open merge request, mr-watchdog watches the MR's remote CI as a background task your
+  MAIN session owns — read-only: it never commits, pushes, or merges. The watcher is launched with
+  run_in_background and tracked by the harness, which re-invokes your session the moment it resolves, so
+  the verdict reaches you IN the conversation: green → "ok c'est bon"; red → the failing job log so your
+  session fixes the *root cause* (no bypass), with `verify` to self-check the fix for fake-green. Engages
+  only a branch THIS session pushed; opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab).
+  The CI-watch step after ship-when-done → merge-review.
 ---
 
 # mr-watchdog
 
-You open the MR; this watches its CI land — in the background, for free. The trigger is the **merge
-request**, not a command: once an MR with live CI exists for the current branch, a **detached watcher**
-starts on its own and keeps polling while you move on.
+You open the MR; this watches its CI land — in the background, and the result **comes back to you in the
+conversation**. The trigger is the **merge request**, not a command.
 
-It is a **read-only** watcher — it never commits, pushes, or merges. When CI goes red it pulls the
-failing job log and, by default, **continues your interactive session to fix the root cause**. Set
-`on_red: "notify"` to just surface it instead.
+The watcher runs as a **background task your session owns**: it is launched with `run_in_background`,
+the **harness tracks it across turns**, and when it exits the harness **re-invokes your session** with
+the result. There is no detached daemon, no status file, no polling-by-hook — the harness's own
+background-task tracking is the delivery channel.
+
+It is **read-only** — it never commits, pushes, or merges. On green it tells you `ok c'est bon`; on red
+it hands back the failing job log so your session fixes the **root cause** (no bypass).
 
 ## How it fires
 
-A **`Stop` hook** (`hooks/hooks.json` → `hooks/stop-hook.py`) at end-of-turn does two cheap things:
-1. **(re)launches** the background watcher (idempotent — no-op if one runs already or there's no open MR),
-2. acts on the watcher's latest result — a `green` notice, or a red **handoff** (see below) — once.
+A **`Stop` hook** (`hooks/stop-hook.py` → `watch.py hook`) checks, at end-of-turn, whether the current
+branch has an **open MR with live CI** that this session pushed and hasn't watched yet for this HEAD. If
+so it emits a **`block`** asking your session to launch the watcher in the background:
 
-**Engages itself** — no opt-in file, no env var. A companion `UserPromptSubmit` hook stamps the branch's
-pushed state at the start of each turn; the watcher only engages a branch **this session actually
-pushed** (its `@{u}` advanced). So a branch you merely *visit* — a stale MR, someone else's MR — is
-never touched. Opt a repo **out** with `{ "enabled": false }` in `.mr-watchdog.json`. The watcher is a
-**detached process** that survives the turn and the Claude session.
+```bash
+python3 scripts/watch.py run --repo <repo>   # launch with run_in_background=true, then carry on
+```
 
-## The loop (read-only)
+You launch it once (the nudge is dedup'd per pipeline HEAD). A companion `UserPromptSubmit` hook stamps
+the branch's pushed state at the start of each turn so engagement only ever covers a branch **this
+session actually pushed** (its `@{u}` advanced) — a stale MR or someone else's MR is never touched. Opt a
+repo **out** with `{ "enabled": false }` in `.mr-watchdog.json`.
 
-| CI status | Action |
+## The watcher (`run`) — poll until resolved, then exit
+
+`run` is a foreground poll loop **meant to be launched with run_in_background**. It polls the CI and
+**exits the moment the pipeline resolves**, printing the verdict — and the harness re-invokes your
+session with that output:
+
+| CI status | What `run` does |
 |---|---|
-| `success` | "ok c'est bon", stop |
 | `pending` | wait `poll_interval`, poll again |
-| `failed` | fetch the failing job log → record a **handoff**, keep polling |
+| `success` | print `ok c'est bon — CI au vert`, **exit 0** |
+| `failed`  | print the failing job log + the fix directive, **exit 1** |
+| MR closed / HEAD moved | print why, exit (a fresh watcher starts after the next push) |
 
-It keeps polling through red, so once a fix lands the same watcher sees the new pipeline through to
-green. A fresh red pipeline (new commit) is handed off once.
+When your session is re-invoked: **green** → tell the user `ok c'est bon`; **red** → fix the ROOT cause
+from the log (no bypass), run `verify`, push the fix. The push re-triggers the chain, and a fresh
+watcher is launched for the new HEAD.
 
-## The handoff — fix in your live session
-
-On the next end-of-turn after a red pipeline, the Stop hook acts on `on_red`:
-
-- **`on_red: "fix"` (default)** — it returns a `Stop`-hook **block** decision, which makes Claude Code
-  **continue your current interactive session** with: *"the CI is failing — fix the root cause, no
-  bypass, run `verify`, then commit."* Your live agent fixes it. Re-entrancy is guarded by
-  `stop_hook_active`, so it triggers **once** per failing pipeline — never an infinite loop. It fires
-  at a turn boundary while you're active (not while you're fully away with no session).
-- **`on_red: "notify"`** — it just prints the failing log + the "fix the root cause … then `verify`"
-  notice, and you drive the fix yourself.
-
-Either way the fix happens in your interactive session; **`verify`** keeps it honest; **ship-when-done**
-(if enabled) commits/pushes; and the watcher then sees the new pipeline through.
+`on_red: "notify"` makes `run` print the red log as a passive report instead of a fix directive.
 
 ## `verify` — the fake-green gate, in your hands
 
@@ -72,9 +72,9 @@ python3 scripts/watch.py verify --repo .
 ## Guardrails
 
 - **Read-only**: never commits, pushes, or merges — there is no git-write path in the watcher.
-- **Only watches**: it polls CI and reads logs — the fix itself is done by your interactive session.
+- **Only watches**: it polls CI and reads logs — the fix is done by your interactive session.
 - **Never the default branch**, never a `wip/` branch, never a detached HEAD (it just won't watch).
-- **One watcher per branch** (atomic pid lock); re-launches are no-ops.
+- **Engagement**: only a branch this session pushed; the launch nudge fires **once per pipeline HEAD**.
 
 ## Enable & configure
 
@@ -82,11 +82,10 @@ No config is required — it engages on its own. Drop a `.mr-watchdog.json` only
 ```jsonc
 {
   "enabled": true,         // set false to opt this repo OUT (engagement is otherwise automatic)
-  "on_red": "fix",         // fix (continue your live session to fix it) | notify (just surface it)
+  "on_red": "fix",         // fix (hand the failure to your session to fix) | notify (just report it)
   "forge": null,           // github | gitlab — auto-detected from the remote unless set
   "poll_interval": 30,     // seconds between CI polls
   "log_lines": 200,        // failing-log lines carried into the handoff
-  "notify": "status-file", // status-file | desktop (macOS notification on red/green)
   "skip_marker": "wip/"
 }
 ```
@@ -94,12 +93,10 @@ No config is required — it engages on its own. Drop a `.mr-watchdog.json` only
 ## Manual / debug
 
 ```bash
-python3 scripts/watch.py start   --repo .     # launch the detached watcher (opt-in repos only)
-python3 scripts/watch.py status  --repo .     # the watcher's JSON status
-python3 scripts/watch.py announce --repo .    # surface the latest handoff / green (what the hook prints)
-python3 scripts/watch.py verify  --repo .     # check the current working-tree fix for fake-green
-python3 scripts/watch.py tick    --repo .     # run ONE poll in the foreground
-python3 scripts/watch.py stop    --repo .     # kill the watcher
+python3 scripts/watch.py run    --repo .     # the bg watcher: poll until resolved, then exit (run_in_background)
+python3 scripts/watch.py hook   --repo .     # what the Stop hook calls: emit the launch block if due
+python3 scripts/watch.py tick   --repo .     # run ONE poll in the foreground (no loop)
+python3 scripts/watch.py verify --repo .     # check the current working-tree fix for fake-green
 ```
 
 ## Dependencies
@@ -109,12 +106,9 @@ status and logs. The fix runs in your interactive session.
 
 ## Caveats
 
-- It opens no MR and merges nothing — pair it with **ship-when-done** (which opens the draft MR) for
-  the full open → green → (you merge) chain.
-- Reading CI status relies on the forge CLI's output; if the CLI can't see a pipeline it reports
-  `none` and the watcher idles rather than guessing.
-- Autonomy lives in **your** session: with `on_red: "fix"` the watchdog continues your live session to
-  do the fix — but that fires at a **turn boundary while you're active**, not
-  while you're fully away with no running session. The watcher keeps monitoring regardless.
-- `manual` debug also has `hook` (what the Stop hook calls: emits the block decision or the notice) —
-  you normally don't call it directly.
+- It opens no MR and merges nothing — it's the CI-watch step after **ship-when-done** (which pushes and
+  opens the MR once **merge-review** has passed) for the full open → review → green → (you merge) chain.
+- Reading CI status relies on the forge CLI's output; if the CLI can't see a pipeline it reports `none`
+  and the watcher idles rather than guessing.
+- Delivery rides the harness: the watcher is a background task **your session launched**, so its verdict
+  re-invokes that session when it resolves. The only remote dependency in the whole chain lives here.

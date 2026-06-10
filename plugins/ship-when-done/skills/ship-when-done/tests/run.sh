@@ -381,6 +381,58 @@ assert_contains 'bitbucket.org' "$out" "30. the surfaced URL is the bitbucket on
 out2=$(python3 "$SHIP" engage --repo "$d" --goal "ZV-1 x" 2>&1)             # turn 3: tip unchanged
 assert_absent 'pr-url' "$out2" "30. third turn (tip unchanged) does NOT re-nag"
 
+# 31. resolve: active repo (subdir / push command / transcript), root-anchored
+rr="$ROOT/t31"; new_repo "$rr" --remote; git -C "$rr" checkout -q -b feat
+sub="$rr/a/b/c"; mkdir -p "$sub"; rtop="$(git -C "$rr" rev-parse --show-toplevel)"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$sub")" "31. resolve: deep subdir → repo root"
+nr="$ROOT/t31-nr"; mkdir -p "$nr"
+assert_eq "" "$(python3 "$SHIP" resolve --cwd "$nr")" "31. resolve: non-repo cwd → empty"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "git -C $rr push origin feat")" "31. resolve: git -C X push → X root"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "cd $rr && git push")" "31. resolve: cd X && git push → X root"
+tpr="$ROOT/t31.jsonl"; printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s/app.txt"}}]}}\n' "$sub" > "$tpr"
+assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$nr" --transcript "$tpr")" "31. resolve: transcript last-edit → its repo root"
+python3 "$SHIP" baseline --repo "$sub" --session s1
+[ -f "$rtop/.git/swd-session.json" ] && ok "31. root-anchor: baseline from subdir → state at repo root" || ko "31. root-anchor subdir"
+
+# 32. merge-review composition: hold the PUSH until the quality gate passes (the COMMIT is the anti-loss)
+d="$ROOT/t32"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"
+printf '{"session":"s","branches":{}}' > "$d/.git/merge-review-session.json"   # merge-review active, no pass yet
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'commit' "$out" "32. commits the work (anti-loss is the local commit)"
+assert_contains 'push-held:merge-review-pending' "$out" "32. unreviewed → push HELD (nothing reaches the remote)"
+assert_absent 'pr:draft' "$out" "32. no PR while the review is pending"
+git -C "$d.git" rev-parse --verify -q feat >/dev/null 2>&1 && ko "32. branch must NOT be on the remote yet" || ok "32. branch not pushed to the remote (gate runs before the push)"
+H=$(git -C "$d" rev-parse HEAD)
+printf '{"head":"%s","passed":true}' "$H" > "$d/.git/merge-review-state.json"
+out=$(ladder "$d" '{"done":true}' pass)
+assert_contains 'push' "$out" "32. review passed → push happens"
+assert_contains 'pr:' "$out" "32. review passed → PR opens"
+git -C "$d.git" rev-parse --verify -q feat >/dev/null 2>&1 && ok "32. branch on the remote after the review" || ko "32. branch pushed after the review"
+# 32b. no merge-review session file → gate inert, push + PR as before (graceful degradation)
+d="$ROOT/t32b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; echo x > "$d/a.txt"
+assert_contains 'pr:' "$(ladder "$d" '{"done":true}' pass)" "32b. merge-review absent → push + PR (no coupling)"
+# 32c. engage emits a review-block continuation when the push is held
+d="$ROOT/t32c"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+printf '{"session":"","branches":{}}' > "$d/.git/merge-review-session.json"; echo x > "$d/a.txt"
+out=$(python3 "$SHIP" engage --repo "$d" --goal "do x" 2>&1)
+assert_contains '"decision": "block"' "$out" "32c. push held → engage emits a block to run the review"
+assert_contains 'merge-review' "$out" "32c. the block tells the session to run merge-review"
+
+# 33. commit subject derived from the changed FILES, never from free prose (no ticket/marker)
+d="$ROOT/t33"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+mkdir -p "$d/plugins/foo"; echo x > "$d/plugins/foo/bar.py"
+python3 "$SHIP" engage --repo "$d" --goal "x" --last-message "this is my rambling prose that must not leak into the commit" >/dev/null 2>&1
+msg=$(git -C "$d" log -1 --pretty=%s)
+assert_absent 'rambling prose' "$msg" "33. commit subject does NOT contain free prose"
+assert_contains 'bar.py' "$msg" "33. commit subject derived from the changed file"
+assert_contains 'foo' "$msg" "33. scope derived from the directory (generic 'plugins' skipped)"
+case "$msg" in chore*|docs*|test*|"["*) ok "33. conventional-commit type prefix";; *) ko "33. conventional type — got [$msg]";; esac
+# docs type when all changed files are docs
+d="$ROOT/t33b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+mkdir -p "$d/docs"; echo '# x' > "$d/docs/guide.md"
+python3 "$SHIP" engage --repo "$d" --goal "x" --last-message "noise" >/dev/null 2>&1
+case "$(git -C "$d" log -1 --pretty=%s)" in docs*) ok "33b. all-docs change → docs: type";; *) ko "33b. docs type — got [$(git -C "$d" log -1 --pretty=%s)]";; esac
+
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
 

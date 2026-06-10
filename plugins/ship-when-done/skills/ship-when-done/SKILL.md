@@ -90,9 +90,17 @@ No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
   "judge_command": null,        // optional independent judge — YOUR own (API-keyed) command; off by default
   "skip_marker": "wip/",
   "forge": null,                 // github | gitlab | bitbucket — auto-detected from the remote unless set
-  "default_base": null           // PR/MR target branch — defaults to the remote's default branch
+  "default_base": null,          // PR/MR target branch — defaults to the remote's default branch
+  "respect_merge_review": true   // hold the PR until a sibling merge-review gate passes (if one is active)
 }
 ```
+
+If the **merge-review** plugin is active in the same repo, ship-when-done still commits (the commit is
+the anti-loss) but **holds the push** until merge-review has passed the current HEAD — the quality gate
+runs **before anything reaches the remote**. It surfaces `push-held:merge-review-pending` and continues
+your session to run `/merge-review`; once a pass is recorded, the push and the PR happen. Loose coupling
+via merge-review's `.git` state — absent, this is inert. (The only remote dependency in the
+ship-when-done → merge-review → mr-watchdog chain is mr-watchdog itself.)
 
 ## Manual / debug
 

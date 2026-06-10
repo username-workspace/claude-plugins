@@ -21,6 +21,7 @@ DEFAULTS = {
     "goal": "",
     "default_base": None,
     "enabled": True,                  # set false to opt a repo OUT (engagement is otherwise automatic)
+    "respect_merge_review": True,     # hold the PR until a sibling merge-review gate passes (if present)
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
@@ -222,14 +223,77 @@ def derive_branch_name(cfg, state):
     return f"swd/{slug}"
 
 
+def commit_scope(files):
+    """A readable conventional-commit scope from the changed files' common directory (skipping generic
+    container dirs like plugins/src/app), or None."""
+    dirs = [os.path.dirname(f) for f in files if os.path.dirname(f)]
+    if not dirs:
+        return None
+    try:
+        common = os.path.commonpath(dirs)
+    except ValueError:
+        return None
+    parts = [p for p in common.split(os.sep) if p and p != "."]
+    generic = {"plugins", "src", "app", "lib", "libs", "packages", "apps", "skills", "scripts", "components"}
+    meaningful = [p for p in parts if p not in generic]
+    return meaningful[0] if meaningful else (parts[-1] if parts else None)
+
+
+def summarize_changes(repo):
+    """A concise conventional-commit (type, scope, description) derived from the CHANGED FILES — used
+    when there is no done-marker summary, so the subject never falls back to free prose."""
+    _, porcelain, _ = run(["git", "status", "--porcelain", "-uall"], repo)
+    files = [l[3:].split(" -> ")[-1].strip().strip('"') for l in porcelain.splitlines() if l.strip()]
+    files = [f for f in files if f]
+    if not files:
+        return "chore", None, "work in progress"
+    low = [f.lower() for f in files]
+    ctype = ("docs" if all(f.endswith((".md", ".mdx", ".rst", ".txt")) for f in low)
+             else "test" if all(("test" in f or "spec" in f) for f in low)
+             else "chore")
+    names = list(dict.fromkeys(os.path.basename(f) for f in files))
+    desc = ("update " + ", ".join(names[:3])) if len(names) <= 3 else f"update {len(files)} files"
+    return ctype, commit_scope(files), desc[:72]
+
+
 def build_commit_message(cfg, state, verdict):
     ticket = find_ticket(cfg.get("goal", ""), cfg["ticket_pattern"]) or find_ticket(state["branch"], cfg["ticket_pattern"])
-    ctype = (verdict or {}).get("type") or "chore"
-    desc = ((verdict or {}).get("summary") or "work in progress").strip().rstrip(".")[:72]
+    v = verdict or {}
+    if v.get("source") == "marker" and (v.get("summary") or "").strip():
+        ctype, scope = v.get("type") or "chore", None
+        desc = v["summary"].strip().rstrip(".")[:72]
+    else:
+        ctype, scope, desc = summarize_changes(state["repo"])
+    head = f"{ctype}({scope}): {desc}" if scope else f"{ctype}: {desc}"
     if ticket and cfg["commit_convention"] == "ticket":
-        return f"[{ticket}] {ctype}: {desc}"
-    base = f"{ctype}: {desc}"
-    return f"{base}\n\nRefs: {ticket}" if ticket else base
+        return f"[{ticket}] {head}"
+    return f"{head}\n\nRefs: {ticket}" if ticket else head
+
+
+def review_gate_pending(repo):
+    """True when a sibling merge-review gate is active for this repo (its session file is present) but
+    has not passed the current HEAD — so we hold the PUSH (the quality gate runs before anything reaches
+    the remote; the commit is the anti-loss). Loose coupling via merge-review's .git state files; if it
+    isn't active here this is always False and ship behaves exactly as before."""
+    gd = git_dir(repo)
+    if not os.path.isfile(os.path.join(gd, "merge-review-session.json")):
+        return False
+    try:
+        st = json.load(open(os.path.join(gd, "merge-review-state.json")))
+    except Exception:
+        return True
+    rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
+    return not (st.get("passed") and st.get("head") == (head if rc == 0 else None))
+
+
+def review_block_reason():
+    return ("The work is committed (safe), and it's ready to ship — but the merge-review quality gate "
+            "has not passed for this HEAD, and nothing is pushed to the remote until it does. Run a "
+            "merge-readiness review now (the merge-review skill, LOCAL mode): score the diff, fix the "
+            "attested findings at the root cause (never fake green — no --no-verify, || true, "
+            "disabled/deleted/weakened tests, lowered thresholds), loop until it clears the threshold, "
+            "then record the pass. Once it passes I'll push and open the PR. If you cannot reach the "
+            "threshold without a workaround, STOP and explain instead.")
 
 
 def run_ladder(state, verdict, gate, cfg):
@@ -287,7 +351,8 @@ def run_ladder(state, verdict, gate, cfg):
     mode = cfg["on_done"]
     done = bool((verdict or {}).get("done"))
     gate_ok = (gate == "pass") or (not cfg["require_green_gate_for_pr"] and gate != "fail")
-    want_pr = done and gate_ok and remote and not state["on_default"] and ahead > 0
+    review_pending = cfg.get("respect_merge_review", True) and review_gate_pending(repo)
+    want_pr = done and gate_ok and not review_pending and remote and not state["on_default"] and ahead > 0
     info = parse_remote(remote_url(repo, remote)) if remote else None
     forge = cfg.get("forge") or (info["forge"] if info else "unknown")
     strategy = pr_strategy(forge)
@@ -297,20 +362,23 @@ def run_ladder(state, verdict, gate, cfg):
     if remote and state["on_default"]:
         res["blocked"].append("refuse-push-default")
     elif remote and (just_committed or not has_up or unpushed > 0):
-        push = ["git", "push", "-u", remote, state["branch"]]
-        gitlab_push = want_pr and mode in ("draft-pr", "ready-pr") and strategy == "gitlab-push"
-        if gitlab_push:
-            title = ("Draft: " if mode == "draft-pr" else "") + " ".join(summary.split())[:72]
-            push += ["-o", "merge_request.create", "-o", f"merge_request.target={base}",
-                     "-o", f"merge_request.title={title}"]
-        rc, _, err = run(push, repo)
-        if rc == 0:
-            res["actions"].append("push")
-            if gitlab_push:
-                res["actions"].append("pr:gitlab-mr")
-                created = True
+        if review_pending:
+            res["blocked"].append("push-held:merge-review-pending")   # quality gate: nothing leaves before review
         else:
-            res["actions"].append(f"push-failed:{err[:60]}")
+            push = ["git", "push", "-u", remote, state["branch"]]
+            gitlab_push = want_pr and mode in ("draft-pr", "ready-pr") and strategy == "gitlab-push"
+            if gitlab_push:
+                title = ("Draft: " if mode == "draft-pr" else "") + " ".join(summary.split())[:72]
+                push += ["-o", "merge_request.create", "-o", f"merge_request.target={base}",
+                         "-o", f"merge_request.title={title}"]
+            rc, _, err = run(push, repo)
+            if rc == 0:
+                res["actions"].append("push")
+                if gitlab_push:
+                    res["actions"].append("pr:gitlab-mr")
+                    created = True
+            else:
+                res["actions"].append(f"push-failed:{err[:60]}")
 
     if want_pr and not created:
         if mode == "suggest":
@@ -435,6 +503,81 @@ def cmd_ladder(args):
     print(json.dumps(run_ladder(git_state(repo), verdict, args.gate, cfg), indent=2))
 
 
+# --- active-repo resolution: the repo we're working in (not the launch dir), root-anchored ---------
+
+def git_toplevel(path):
+    if not path:
+        return None
+    rc, top, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], ".")
+    return top if rc == 0 and top else None
+
+
+def repo_root(path):
+    ap = os.path.abspath(path or ".")
+    return git_toplevel(ap) or ap
+
+
+def repo_from_command(cmd):
+    m = re.search(r"\bgit\b[^&|;]*?\s-C\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "") \
+        or re.search(r"(?:^|&&|;|\|)\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "")
+    return m.group(1).strip("\"'") if m else None
+
+
+def last_edited_file(tp):
+    if not tp or not os.path.isfile(tp):
+        return None
+    last, edits = None, {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
+    try:
+        for line in open(tp, errors="ignore"):
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("type") != "assistant":
+                continue
+            content = (d.get("message") or {}).get("content")
+            if isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in edits:
+                        inp = b.get("input") or {}
+                        fp = inp.get("file_path") or inp.get("notebook_path")
+                        if fp:
+                            last = fp
+    except Exception:
+        return None
+    return last
+
+
+def resolve_repo(cwd, transcript, command):
+    """The git repo root we're actually working in: the one named in a push command, else the cwd's
+    repo, else the repo of the most-recently edited file. None when no git repo is in scope."""
+    if command:
+        p = repo_from_command(command)
+        if p:
+            if not os.path.isabs(p) and cwd:
+                p = os.path.join(cwd, p)
+            r = git_toplevel(p)
+            if r:
+                return r
+    if cwd:
+        r = git_toplevel(cwd)
+        if r:
+            return r
+    if transcript:
+        f = last_edited_file(transcript)
+        if f:
+            r = git_toplevel(os.path.dirname(f))
+            if r:
+                return r
+    return None
+
+
+def cmd_resolve(args):
+    r = resolve_repo(args.cwd, args.transcript, args.command)
+    if r:
+        print(r)
+
+
 # --- session engagement: only act on work THIS session produced (not a pre-existing dirty tree) -----
 
 def cur_branch(repo):
@@ -531,6 +674,9 @@ def cmd_engage(args):
     res = run_ladder(state, verdict, gate, cfg)
     if any(a.startswith("pr:draft") or a.startswith("pr:ready") or a == "pr:gitlab-mr" for a in res["actions"]):
         clear_marker(repo)
+    if "push-held:merge-review-pending" in res["blocked"]:
+        print(json.dumps({"decision": "block", "reason": review_block_reason()}))
+        return
     summary = " · ".join(res["actions"]) or res.get("skipped") or "no-op"
     line = f"[ship-when-done] {summary}" + (f"  (withheld: {', '.join(res['blocked'])})" if res["blocked"] else "")
     link = res.get("pr") or res.get("pr_url")
@@ -570,7 +716,12 @@ def main():
     m = sub.add_parser("mark-done")
     m.add_argument("--repo", default="."); m.add_argument("--summary", default=""); m.add_argument("--type", default="chore")
     m.set_defaults(fn=cmd_mark_done)
+    rv = sub.add_parser("resolve")
+    rv.add_argument("--cwd", default=""); rv.add_argument("--transcript", default=""); rv.add_argument("--command", default="")
+    rv.set_defaults(fn=cmd_resolve)
     args = ap.parse_args()
+    if getattr(args, "repo", None) is not None:
+        args.repo = repo_root(args.repo)
     args.fn(args)
 
 

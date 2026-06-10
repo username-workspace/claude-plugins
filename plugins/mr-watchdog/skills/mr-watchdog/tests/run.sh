@@ -136,31 +136,25 @@ out=$(python3 "$WATCH" verify --repo "$d" 2>&1); rc=$?
 assert_eq 1 "$rc" "6. gutting a test (assert True) → verify fails"
 assert_contains 'green' "$out" "6. weakened/assert-True test flagged"
 
-# 7. announce: surfaces the handoff (with log) once; green; silent while watching
-d="$ROOT/a"; new_repo "$d"
-printf '{"state":"needs-fix","branch":"feat","log":"BOOM at app.py:7","announced":false}' > "$d/.git/mr-watchdog-status.json"
-a1=$(python3 "$WATCH" announce --repo "$d"); a2=$(python3 "$WATCH" announce --repo "$d")
-assert_contains 'CAUSE RACINE' "$a1" "7. needs-fix → surfaces the root-cause handoff"
-assert_contains 'BOOM at app.py:7' "$a1" "7. handoff includes the failing log"
-assert_contains 'verify' "$a1" "7. handoff tells the live session to self-check with verify"
-assert_eq "" "$a2" "7. handoff announced only once"
-printf '{"state":"green","announced":false}' > "$d/.git/mr-watchdog-status.json"
-assert_contains "ok c'est bon" "$(python3 "$WATCH" announce --repo "$d")" "7. green → ok c'est bon"
-printf '{"state":"watching","announced":false}' > "$d/.git/mr-watchdog-status.json"
-assert_eq "" "$(python3 "$WATCH" announce --repo "$d")" "7. while watching → silent"
-
-# 8. lock + reset
-d="$ROOT/l"; new_repo "$d"
-python3 -c "import sys; sys.path.insert(0,'$SCRIPTS'); import os,watch
-print('dead', watch.watcher_alive('$d'))
-watch.write_lock('$d', os.getpid()); print('self', watch.watcher_alive('$d'))
-print('acq2', watch.acquire_lock('$d'))" > "$ROOT/l.out"
-assert_contains 'dead False' "$(cat "$ROOT/l.out")" "8. no lock → not alive"
-assert_contains 'self True' "$(cat "$ROOT/l.out")" "8. live pid → alive"
-assert_contains 'acq2 False' "$(cat "$ROOT/l.out")" "8. acquire refuses when a live watcher holds the lock"
-printf '{"state":"green"}' > "$d/.git/mr-watchdog-status.json"
-python3 "$WATCH" reset --repo "$d" >/dev/null
-[ ! -f "$d/.git/mr-watchdog-status.json" ] && ok "8. reset clears status" || ko "8. reset clears status"
+# 7. run (the bg watcher): poll until the pipeline resolves, then exit with the verdict (read-only)
+d="$ROOT/run"; new_repo "$d"; before=$(count "$d" HEAD)
+out=$(STUB_CI=success python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
+assert_contains "ok c'est bon" "$out" "7. green → 'ok c'est bon'"
+assert_eq 0 "$rc" "7. green → exit 0"
+out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
+assert_contains 'ROOT CAUSE' "$out" "7. red → hands the failure back to fix the root cause"
+assert_contains 'AssertionError' "$out" "7. red → carries the failing job log"
+assert_contains 'verify' "$out" "7. red → verify before commit"
+assert_eq 1 "$rc" "7. red → exit 1 (so the harness re-invokes with a failure)"
+assert_eq "$before" "$(count "$d" HEAD)" "7. READ-ONLY: the watcher made no commit"
+git -C "$d" diff --quiet && ok "7. READ-ONLY: working tree untouched" || ko "7. working tree untouched"
+assert_contains 'no open merge request' "$(STUB_CI=failed STUB_MR_STATE=CLOSED python3 "$WATCH" run --repo "$d" 2>&1)" "7. MR closed → watcher exits, does not watch"
+printf '{"on_red":"notify"}' > "$d/.mr-watchdog.json"
+out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
+assert_absent 'ROOT CAUSE' "$out" "7. on_red=notify → no fix directive"
+assert_contains 'CI rouge' "$out" "7. on_red=notify → passive red report"
+assert_eq 1 "$rc" "7. on_red=notify → still exit 1"
+printf '{}' > "$d/.mr-watchdog.json"
 
 # 9. engagement: a branch is watched only if THIS session pushed it (no opt-in file needed)
 d="$ROOT/eng"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
@@ -175,40 +169,53 @@ dm="$ROOT/em"; new_repo "$dm" github.com main
 python3 "$WATCH" baseline --repo "$dm" --session S >/dev/null
 assert_eq "no" "$(python3 "$WATCH" engaged --repo "$dm" --session S)" "9. default branch → never engaged"
 d="$ROOT/o2"; new_repo "$d"
-assert_absent 'watching' "$(STUB_MR_STATE=CLOSED python3 "$WATCH" start --repo "$d" --verbose 2>&1)" "9. no open MR → no watcher"
+assert_contains 'no open merge request' "$(STUB_MR_STATE=CLOSED python3 "$WATCH" run --repo "$d" 2>&1)" "9. no open MR → the watcher exits immediately (nothing to watch)"
 
 # 10. GUARDRAILS: the watcher is read-only — no commit / push / merge anywhere in the source
 grep -Eq "['\"]merge['\"]" "$WATCH" && ko "10. never merges (no merge command)" || ok "10. never merges (no merge command in source)"
 grep -Eq 'git[^\n]*(commit|push)|"-A"|reset[^\n]*hard|checkout[^\n]*--' "$WATCH" && ko "10. read-only: no git mutation in the watcher" || ok "10. read-only: never commits, pushes, or mutates the tree"
 grep -q 'claude' "$WATCH" && ko "10. runs no model itself" || ok "10. runs no model itself (no 'claude' anywhere in the watcher)"
 
-# 11. hook decision: red + on_red=fix (default) → a `block` that continues the live session to fix
-d="$ROOT/h"; new_repo "$d"
-printf '{"state":"needs-fix","branch":"feat","log":"BOOM app.py:7","announced":false}' > "$d/.git/mr-watchdog-status.json"
-out=$(python3 "$WATCH" hook --repo "$d")
-assert_contains '"decision": "block"' "$out" "11. on_red=fix (default) → emits a block decision"
-assert_contains 'ROOT CAUSE' "$out" "11. block reason: fix the root cause"
-assert_contains 'BOOM app.py:7' "$out" "11. block reason carries the failing log"
-assert_contains 'verify' "$out" "11. block reason points to verify before commit"
-assert_eq "" "$(python3 "$WATCH" hook --repo "$d")" "11. handled once (announced) → silent next time"
-printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"
-printf '{"on_red":"notify"}' > "$d/.mr-watchdog.json"
-out=$(python3 "$WATCH" hook --repo "$d")
-assert_absent '"decision"' "$out" "11. on_red=notify → NO block decision (passive)"
-assert_contains 'CAUSE RACINE' "$out" "11. on_red=notify → surfaces the passive handoff"
-printf '{"state":"green","announced":false}' > "$d/.git/mr-watchdog-status.json"
-assert_contains "ok c'est bon" "$(python3 "$WATCH" hook --repo "$d")" "11. green → ok c'est bon"
+# 11. hook (Stop-hook launch trigger): engaged + open MR + live CI → block to launch the bg watcher
+d="$ROOT/hk"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session S >/dev/null
+echo z>"$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w
+git -C "$d" push -q origin feat 2>/dev/null     # this session pushed the branch → engaged
+out=$(STUB_CI=pending python3 "$WATCH" hook --repo "$d" --session S)
+assert_contains '"decision": "block"' "$out" "11. engaged + open MR + CI running → block to launch a bg watcher"
+assert_contains 'run_in_background' "$out" "11. the block tells the session to launch it in the background"
+assert_contains 'run --repo' "$out" "11. the block carries the watcher command"
+assert_eq "" "$(STUB_CI=pending python3 "$WATCH" hook --repo "$d" --session S)" "11. asked once per HEAD → silent next time"
+assert_eq "" "$(STUB_CI=pending python3 "$WATCH" hook --repo "$d" --session OTHER)" "11. different session (not engaged) → silent"
+d="$ROOT/hk2"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session S >/dev/null
+echo z>"$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
+assert_eq "" "$(STUB_CI=none python3 "$WATCH" hook --repo "$d" --session S)" "11. no pipeline yet → silent (nothing to watch)"
+assert_eq "" "$(STUB_CI=pending STUB_MR_STATE=CLOSED python3 "$WATCH" hook --repo "$d" --session S)" "11. no open MR → silent"
 
-# 12. Stop-hook plumbing: gated on engagement; emits the block when engaged; re-entrancy guard
+# 12. Stop-hook plumbing: resolves the repo, gated on engagement; emits the launch block; re-entrancy
 HOOK="$(cd "$(dirname "$WATCH")/../../.." && pwd)/hooks/stop-hook.py"
-d="$ROOT/sh"; new_repo "$d"   # MR CLOSED so the hook's `start` spawns no daemon
-mkneed(){ printf '{"state":"needs-fix","branch":"feat","log":"BOOM","announced":false}' > "$d/.git/mr-watchdog-status.json"; }
-mkeng(){ printf '{"session":"X","branches":{"feat":{"engaged":true}}}' > "$d/.git/mr-watchdog-session.json"; }
-mkneed; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
-assert_eq "" "$out" "12. NOT engaged → Stop hook stays silent (a branch we didn't push)"
-mkneed; mkeng; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
-assert_contains '"decision": "block"' "$out" "12. engaged → Stop hook emits the block decision"
-mkneed; mkeng; out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":true}" | STUB_MR_STATE=CLOSED python3 "$HOOK" 2>/dev/null)
-assert_eq "" "$out" "12. re-entrancy: stop_hook_active → hook silent (no infinite block loop)"
+d="$ROOT/sh"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session X >/dev/null
+out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_CI=pending python3 "$HOOK" 2>/dev/null)
+assert_eq "" "$out" "12. not engaged (no push this session) → Stop hook silent"
+echo z>"$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
+out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":false}" | STUB_CI=pending python3 "$HOOK" 2>/dev/null)
+assert_contains '"decision": "block"' "$out" "12. engaged + open MR + CI running → Stop hook emits the launch block"
+out=$(echo "{\"cwd\":\"$d\",\"session_id\":\"X\",\"stop_hook_active\":true}" | STUB_CI=pending python3 "$HOOK" 2>/dev/null)
+assert_eq "" "$out" "12. re-entrancy: stop_hook_active → hook silent"
+
+# 13. resolve: active repo (subdir / push command / transcript), root-anchored
+rr="$ROOT/r13"; new_repo "$rr"   # on branch feat, with origin
+rsub="$rr/a/b/c"; mkdir -p "$rsub"; rtop="$(git -C "$rr" rev-parse --show-toplevel)"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --cwd "$rsub")" "13. resolve: deep subdir → repo root"
+rnr="$ROOT/r13-nr"; mkdir -p "$rnr"
+assert_eq "" "$(python3 "$WATCH" resolve --cwd "$rnr")" "13. resolve: non-repo cwd → empty"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --command "git -C $rr push origin feat")" "13. resolve: git -C X push → X root"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --command "cd $rr && git push")" "13. resolve: cd X && git push → X root"
+rtp="$ROOT/r13.jsonl"; printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/app.txt"}}]}}\n' "$rsub" > "$rtp"
+assert_eq "$rtop" "$(python3 "$WATCH" resolve --cwd "$rnr" --transcript "$rtp")" "13. resolve: transcript last-edit → its repo root"
+python3 "$WATCH" baseline --repo "$rsub" --session s1
+[ -f "$rtop/.git/mr-watchdog-session.json" ] && ok "13. root-anchor: baseline from subdir → state at repo root" || ko "13. root-anchor subdir"
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

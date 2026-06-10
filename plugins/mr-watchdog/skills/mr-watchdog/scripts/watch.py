@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""mr-watchdog — once a merge request is open, watch its remote CI in the background and, on a red
-pipeline, hand the failure off to your interactive session to fix at the root.
+"""mr-watchdog — once a merge request is open, watch its CI in a background task the MAIN session owns,
+and when it resolves hand the verdict back to that session: green → 'ok c'est bon', red → the failing
+job log so the session fixes the ROOT cause (no bypass).
 
-Read-only: it polls the CI, fetches the failing job log, and surfaces it — it never commits, pushes, or
-merges, and runs no model itself. The fix happens in your interactive session; `verify` lets that
-session self-check its change for fake-green before committing. It engages only a branch this session
-pushed; opt a repo out with enabled:false.
+The watcher (`run`) is a foreground poll loop the session launches with run_in_background; the harness
+tracks it and re-invokes the session when it exits — there is no detached daemon, status file, or lock.
+The Stop hook only nudges the session to launch it (a `block` continuation, once per pipeline HEAD).
+Read-only: it never commits, pushes, or merges, and runs no model itself. Opt a repo out with
+enabled:false.
 """
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess, sys, time
 from shutil import which
 
 DEFAULTS = {
@@ -15,14 +17,13 @@ DEFAULTS = {
     "forge": None,            # github | gitlab; auto-detected from the remote if null
     "poll_interval": 30,      # seconds between CI polls
     "log_lines": 200,         # failing-log lines carried into the handoff
-    "on_red": "fix",          # fix (continue your live session to fix it) | notify (just surface it)
-    "notify": "status-file",  # status-file | desktop
+    "on_red": "fix",          # fix (hand the failure to the session to fix) | notify (just report it)
     "skip_marker": "wip/",
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
 
-# A change that hides a failure instead of resolving it — surfaced by `verify` so the fix can't fake green.
+# A change that hides a failure instead of resolving it — surfaced by `verify` so a fix can't fake green.
 BYPASS_PATTERNS = [
     r"--no-verify",
     r"\|\|\s*true\b",
@@ -121,6 +122,81 @@ def forge_cli(forge):
     return "gh" if forge == "github" else "glab" if forge == "gitlab" else None
 
 
+# --- active-repo resolution: the repo we're working in (not the launch dir), root-anchored ---------
+
+def git_toplevel(path):
+    if not path:
+        return None
+    rc, top, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], ".")
+    return top if rc == 0 and top else None
+
+
+def repo_root(path):
+    ap = os.path.abspath(path or ".")
+    return git_toplevel(ap) or ap
+
+
+def repo_from_command(cmd):
+    m = re.search(r"\bgit\b[^&|;]*?\s-C\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "") \
+        or re.search(r"(?:^|&&|;|\|)\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "")
+    return m.group(1).strip("\"'") if m else None
+
+
+def last_edited_file(tp):
+    if not tp or not os.path.isfile(tp):
+        return None
+    last, edits = None, {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
+    try:
+        for line in open(tp, errors="ignore"):
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("type") != "assistant":
+                continue
+            content = (d.get("message") or {}).get("content")
+            if isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in edits:
+                        inp = b.get("input") or {}
+                        fp = inp.get("file_path") or inp.get("notebook_path")
+                        if fp:
+                            last = fp
+    except Exception:
+        return None
+    return last
+
+
+def resolve_repo(cwd, transcript, command):
+    """The git repo root we're actually working in: the one named in a push command, else the cwd's
+    repo, else the repo of the most-recently edited file. None when no git repo is in scope."""
+    if command:
+        p = repo_from_command(command)
+        if p:
+            if not os.path.isabs(p) and cwd:
+                p = os.path.join(cwd, p)
+            r = git_toplevel(p)
+            if r:
+                return r
+    if cwd:
+        r = git_toplevel(cwd)
+        if r:
+            return r
+    if transcript:
+        f = last_edited_file(transcript)
+        if f:
+            r = git_toplevel(os.path.dirname(f))
+            if r:
+                return r
+    return None
+
+
+def cmd_resolve(args):
+    r = resolve_repo(args.cwd, args.transcript, args.command)
+    if r:
+        print(r)
+
+
 # --- remote state: open MR + CI status -------------------------------------------------------------
 
 def mr_open(repo, forge, branch):
@@ -197,77 +273,6 @@ def failing_log(repo, forge, branch):
     return ""
 
 
-# --- daemon lock + status --------------------------------------------------------------------------
-
-def lock_path(repo):
-    return os.path.join(git_dir(repo), "mr-watchdog.lock")
-
-
-def status_path(repo):
-    return os.path.join(git_dir(repo), "mr-watchdog-status.json")
-
-
-def watcher_alive(repo):
-    try:
-        pid = int(open(lock_path(repo)).read().strip())
-    except Exception:
-        return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def write_lock(repo, pid):
-    open(lock_path(repo), "w").write(str(pid))
-
-
-def acquire_lock(repo):
-    """Atomically reserve the single-watcher slot. Returns False if a live watcher already holds it."""
-    if watcher_alive(repo):
-        return False
-    path = lock_path(repo)
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        if watcher_alive(repo):
-            return False
-        try:
-            os.remove(path)
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except (OSError, FileExistsError):
-            return False
-    os.write(fd, str(os.getpid()).encode())
-    os.close(fd)
-    return True
-
-
-def clear_lock(repo):
-    try:
-        os.remove(lock_path(repo))
-    except OSError:
-        pass
-
-
-def write_status(repo, **fields):
-    data = read_status(repo) or {}
-    data.update(fields)
-    try:
-        json.dump(data, open(status_path(repo), "w"))
-    except OSError:
-        pass
-
-
-def read_status(repo):
-    try:
-        return json.load(open(status_path(repo)))
-    except Exception:
-        return None
-
-
 # --- session engagement: only watch a branch THIS session pushed (so its pipeline is ours) ----------
 
 def upstream_sha(repo):
@@ -306,7 +311,7 @@ def write_session(repo, data):
 
 def cmd_baseline(args):
     """UserPromptSubmit: stamp the branch's pushed state at turn start, so a later push is detectable."""
-    repo = os.path.abspath(args.repo)
+    repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
     branch = feature_branch(repo, cfg)
     if not branch:
@@ -343,7 +348,7 @@ def engaged(repo, cfg, session):
 
 
 def cmd_engaged(args):
-    repo = os.path.abspath(args.repo)
+    repo = repo_root(args.repo)
     print("yes" if engaged(repo, load_config(repo, args.config), args.session) else "no")
 
 
@@ -402,7 +407,16 @@ def fake_green(repo):
     return f"bypass:{hit[:40]}" if hit else ""
 
 
-# --- the watch loop (read-only: poll → surface) ----------------------------------------------------
+def cmd_verify(args):
+    repo = repo_root(args.repo)
+    reason = fake_green(repo)
+    if reason:
+        print(f"[mr-watchdog] ✗ fake-green: {reason} — fix the root cause, don't hide the failure")
+        sys.exit(1)
+    print("[mr-watchdog] ✓ no bypass detected — the change addresses the failure, not the check")
+
+
+# --- guard + one-poll tick -------------------------------------------------------------------------
 
 def guard_state(repo, cfg):
     """Returns (branch, forge, remote) or raises a string reason it must not watch."""
@@ -442,201 +456,144 @@ def tick(repo, cfg, branch, forge, remote):
     return {"state": "continue", "ci": status}
 
 
-def terminate(repo, cfg, state, reason):
-    write_status(repo, state=state, reason=reason, head=head_sha(repo), announced=False)
-    notify(repo, cfg, state, reason)
-    clear_lock(repo)
-
-
-def run_loop(repo, cfg):
-    import time
-    try:
-        branch, forge, remote = guard_state(repo, cfg)
-    except ValueError as e:
-        terminate(repo, cfg, "stopped", str(e))
-        return
-    write_status(repo, state="watching", branch=branch, head=head_sha(repo), announced=False, reason=None)
-    while True:
-        try:
-            if guard_state(repo, cfg)[0] != branch:
-                terminate(repo, cfg, "stopped", "branch-moved")
-                return
-        except ValueError as e:
-            terminate(repo, cfg, "stopped", str(e))
-            return
-        res = tick(repo, cfg, branch, forge, remote)
-        st = res["state"]
-        if st == "green":
-            terminate(repo, cfg, "green", None)
-            return
-        if st in ("no-mr", "branch-changed"):
-            terminate(repo, cfg, "stopped", st)
-            return
-        if st == "needs-fix":
-            head = head_sha(repo)
-            if (read_status(repo) or {}).get("handoff_head") != head:
-                write_status(repo, state="needs-fix", branch=branch, head=head, handoff_head=head,
-                             log=res.get("log", ""), announced=False, reason=None)
-                notify(repo, cfg, "needs-fix", None)
-        time.sleep(max(5, int(cfg["poll_interval"])))
-
-
-def notify(repo, cfg, state, reason):
-    msg = {"green": "ok c'est bon — CI au vert",
-           "needs-fix": f"CI rouge sur {os.path.basename(repo)} — à corriger (handoff)",
-           "stopped": f"arrêt : {reason or ''}"}.get(state)
-    if msg and cfg.get("notify") == "desktop" and sys.platform == "darwin":
-        run(["osascript", "-e", f'display notification "{msg}" with title "mr-watchdog"'], repo)
-
-
-# --- commands --------------------------------------------------------------------------------------
-
-def cmd_start(args):
-    repo = os.path.abspath(args.repo)
-    cfg = load_config(repo, args.config)
-    if not cfg.get("enabled", True):
-        return
-    if watcher_alive(repo):
-        if args.verbose:
-            print("[mr-watchdog] already watching")
-        return
-    try:
-        branch, forge, remote = guard_state(repo, cfg)
-    except ValueError as e:
-        if args.verbose:
-            print(f"[mr-watchdog] not starting: {e}")
-        return
-    if not mr_open(repo, forge, branch):
-        if args.verbose:
-            print("[mr-watchdog] no open MR for this branch")
-        return
-    if not acquire_lock(repo):
-        return
-    logf = open(os.path.join(git_dir(repo), "mr-watchdog.log"), "a")
-    p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "_run", "--repo", repo],
-                         stdout=logf, stderr=logf, stdin=subprocess.DEVNULL,
-                         start_new_session=True, cwd=repo)
-    write_lock(repo, p.pid)
-    print(f"[mr-watchdog] watching {branch} (pid {p.pid})")
-
-
-def cmd_run(args):
-    repo = os.path.abspath(args.repo)
-    cfg = load_config(repo, args.config)
-    write_lock(repo, os.getpid())
-    run_loop(repo, cfg)
-
-
-def cmd_stop(args):
-    import signal
-    repo = os.path.abspath(args.repo)
-    try:
-        pid = int(open(lock_path(repo)).read().strip())
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except (OSError, ValueError):
-        pass
-    clear_lock(repo)
-    write_status(repo, state="stopped", reason="manual")
-    print("[mr-watchdog] stopped")
-
-
-def cmd_reset(args):
-    repo = os.path.abspath(args.repo)
-    clear_lock(repo)
-    try:
-        os.remove(status_path(repo))
-    except OSError:
-        pass
-    print("[mr-watchdog] reset")
-
-
-def cmd_status(args):
-    repo = os.path.abspath(args.repo)
-    print(json.dumps(read_status(repo) or {"state": "none"}, indent=2))
-
-
-def handoff_message(st):
-    log = (st.get("log") or "")[-4000:]
-    return (f"[mr-watchdog] ⚠ CI rouge sur '{st.get('branch')}'. Corrige la CAUSE RACINE — pas de "
-            f"contournement (ne désactive/supprime/affaiblis aucun test, pas de --no-verify, || true, "
-            f"seuils baissés…). Puis `watch.py verify` avant de committer. Log du job en échec :\n" + log)
-
-
-def fix_instruction(repo, st):
-    log = (st.get("log") or "")[-4000:]
-    verify = f"python3 {os.path.abspath(__file__)} verify --repo {repo}"
-    return ("The CI pipeline for merge-request branch '" + str(st.get("branch")) + "' is failing. Fix "
-            "the ROOT CAUSE of the failure now. Do NOT fake green: never disable, skip, delete, or "
-            "weaken a test; no --no-verify, no `|| true`, no continue-on-error/allow_failure, no "
-            "lowered coverage or thresholds. Make the minimal correct change. Then run `" + verify +
-            "` and only commit/push if it passes. If the only way to make it pass is a workaround, "
-            "STOP and explain instead. Failing job log:\n" + log)
-
-
-def cmd_announce(args):
-    repo = os.path.abspath(args.repo)
-    st = read_status(repo)
-    if not st or st.get("announced") or st.get("state") == "watching":
-        return
-    if st.get("state") == "needs-fix":
-        print(handoff_message(st))
-    else:
-        msg = {"green": "ok c'est bon — CI au vert",
-               "stopped": f"arrêt : {st.get('reason') or ''}"}.get(st.get("state"))
-        if msg:
-            print(f"[mr-watchdog] {msg}")
-    write_status(repo, announced=True)
-
-
-def cmd_hook(args):
-    """The Stop hook's mouthpiece: on a fresh red handoff, either continue the live session to fix it
-    (on_red=fix → emit a block decision) or just surface it (on_red=notify). Marks it handled."""
-    repo = os.path.abspath(args.repo)
-    cfg = load_config(repo, args.config)
-    st = read_status(repo)
-    if not st or st.get("announced") or st.get("state") == "watching":
-        return
-    state = st.get("state")
-    if state == "needs-fix":
-        write_status(repo, announced=True)
-        if cfg.get("on_red", "fix") == "fix":
-            print(json.dumps({"decision": "block", "reason": fix_instruction(repo, st)}))
-        else:
-            print(handoff_message(st))
-    elif state == "green":
-        write_status(repo, announced=True)
-        print("[mr-watchdog] ok c'est bon — CI au vert")
-
-
-def cmd_verify(args):
-    repo = os.path.abspath(args.repo)
-    reason = fake_green(repo)
-    if reason:
-        print(f"[mr-watchdog] ✗ fake-green: {reason} — fix the root cause, don't hide the failure")
-        sys.exit(1)
-    print("[mr-watchdog] ✓ no bypass detected — the change addresses the failure, not the check")
-
-
 def cmd_tick(args):
-    repo = os.path.abspath(args.repo)
+    repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
     branch, forge, remote = guard_state(repo, cfg)
     print(json.dumps(tick(repo, cfg, branch, forge, remote), indent=2))
 
 
+# --- the handoffs: what the session is told ---------------------------------------------------------
+
+def fix_instruction(repo, branch, log):
+    log = (log or "")[-4000:]
+    verify = f"python3 {os.path.abspath(__file__)} verify --repo {repo}"
+    return ("The CI pipeline for merge-request branch '" + str(branch) + "' is failing. Fix the ROOT "
+            "CAUSE of the failure now. Do NOT fake green: never disable, skip, delete, or weaken a test; "
+            "no --no-verify, no `|| true`, no continue-on-error/allow_failure, no lowered coverage or "
+            "thresholds. Make the minimal correct change. Then run `" + verify + "` and only commit/push "
+            "if it passes. If the only way to make it pass is a workaround, STOP and explain instead. "
+            "Failing job log:\n" + log)
+
+
+def launch_instruction(repo):
+    cmd = f"python3 {os.path.abspath(__file__)} run --repo {repo}"
+    return ("An open merge request for this branch has CI running. Launch the watcher in the BACKGROUND "
+            "so you're told the moment it resolves — run this with run_in_background=true, then carry on "
+            "(do NOT wait on it):\n  " + cmd + "\nWhen it exits, its result comes back to you: green → "
+            "tell me 'ok c'est bon — CI au vert'; red → fix the ROOT cause from its log (no bypass), run "
+            "verify, and push the fix.")
+
+
+# --- the background watcher (run_in_background): poll until the pipeline resolves, then exit ---------
+
+def cmd_run(args):
+    """Foreground CI watcher meant to be launched with run_in_background. Polls until the pipeline
+    resolves, prints the verdict, and exits (0 green / 1 red). The harness re-invokes the session with
+    this output — that is how the verdict reaches you. Read-only."""
+    repo = repo_root(args.repo)
+    cfg = load_config(repo, args.config)
+    if not cfg.get("enabled", True):
+        return
+    try:
+        branch, forge, remote = guard_state(repo, cfg)
+    except ValueError as e:
+        print(f"[mr-watchdog] not watching: {e}")
+        return
+    head = head_sha(repo)
+    deadline = (time.time() + float(args.timeout)) if args.timeout else None
+    while True:
+        if current_branch(repo) != branch or head_sha(repo) != head:
+            print("[mr-watchdog] stopped: branch/HEAD moved — a fresh watcher starts after the next push")
+            return
+        if not mr_open(repo, forge, branch):
+            print("[mr-watchdog] stopped: no open merge request for this branch")
+            return
+        status = ci_status(repo, forge, branch)
+        if status == "success":
+            print(f"[mr-watchdog] ok c'est bon — CI au vert sur '{branch}'")
+            return
+        if status == "failed":
+            log = failing_log(repo, forge, branch)
+            if cfg.get("on_red", "fix") == "fix":
+                print(fix_instruction(repo, branch, log))
+            else:
+                tail = "\n".join(log.splitlines()[-int(cfg["log_lines"]):])
+                print(f"[mr-watchdog] CI rouge sur '{branch}' — à corriger. Log du job en échec :\n{tail}")
+            sys.exit(1)
+        if deadline and time.time() > deadline:
+            print(f"[mr-watchdog] stopped: timeout while CI was {status}")
+            return
+        time.sleep(max(1, int(cfg["poll_interval"])))
+
+
+# --- the Stop-hook nudge: ask the session to launch a watcher (once per pipeline HEAD) --------------
+
+def watch_marker_path(repo):
+    return os.path.join(git_dir(repo), "mr-watchdog-watch.json")
+
+
+def watch_requested(repo, head):
+    try:
+        return json.load(open(watch_marker_path(repo))).get("head") == head
+    except Exception:
+        return False
+
+
+def mark_watch_requested(repo, head):
+    try:
+        json.dump({"head": head}, open(watch_marker_path(repo), "w"))
+    except OSError:
+        pass
+
+
+def cmd_hook(args):
+    """Stop-hook mouthpiece: when this session's branch has an open MR with live CI and we haven't asked
+    yet for this HEAD, emit a `block` telling the session to launch the bg watcher. Else nothing."""
+    repo = repo_root(args.repo)
+    cfg = load_config(repo, args.config)
+    if not cfg.get("enabled", True) or not engaged(repo, cfg, args.session):
+        return
+    try:
+        branch, forge, remote = guard_state(repo, cfg)
+    except ValueError:
+        return
+    if not mr_open(repo, forge, branch):
+        return
+    head = head_sha(repo)
+    if watch_requested(repo, head):
+        return
+    if ci_status(repo, forge, branch) not in ("pending", "failed"):
+        return
+    mark_watch_requested(repo, head)
+    print(json.dumps({"decision": "block", "reason": launch_instruction(repo)}))
+
+
 def main():
     ap = argparse.ArgumentParser(description="mr-watchdog")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn in (("start", cmd_start), ("_run", cmd_run), ("stop", cmd_stop), ("reset", cmd_reset),
-                     ("status", cmd_status), ("announce", cmd_announce), ("hook", cmd_hook),
-                     ("baseline", cmd_baseline), ("engaged", cmd_engaged),
-                     ("verify", cmd_verify), ("tick", cmd_tick)):
+
+    def common(name, fn):
         s = sub.add_parser(name)
         s.add_argument("--repo", default=".")
         s.add_argument("--config")
         s.add_argument("--session", default="")
-        s.add_argument("--verbose", action="store_true")
         s.set_defaults(fn=fn)
+        return s
+
+    common("baseline", cmd_baseline)
+    common("engaged", cmd_engaged)
+    common("hook", cmd_hook)
+    common("verify", cmd_verify)
+    common("tick", cmd_tick)
+    r = common("run", cmd_run)
+    r.add_argument("--timeout")
+    rv = sub.add_parser("resolve")
+    rv.add_argument("--cwd", default="")
+    rv.add_argument("--transcript", default="")
+    rv.add_argument("--command", default="")
+    rv.set_defaults(fn=cmd_resolve)
+
     args = ap.parse_args()
     args.fn(args)
 

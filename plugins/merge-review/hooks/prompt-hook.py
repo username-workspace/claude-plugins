@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Stop-hook plumbing: resolve the repo we're working in, then let watch.py decide whether to nudge this
-session to launch the background CI watcher (a `block` continuation). All policy lives in watch.py."""
+"""UserPromptSubmit: stamp the active repo's HEAD + dirty set at turn start, so the pre-push gate can
+tell whether THIS session produced the work it is about to push. The repo is the one we're working in
+(resolved from cwd / recent edits), not the directory Claude was launched in."""
 import json, os, subprocess, sys
 
 
@@ -19,19 +20,15 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return
-    if payload.get("stop_hook_active"):
-        return
     session = payload.get("session_id") or ""
     root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    script = os.path.join(root, "skills", "mr-watchdog", "scripts", "watch.py")
+    script = os.path.join(root, "skills", "merge-review", "scripts", "review.py")
     repo = resolve(script, payload.get("cwd") or "", payload.get("transcript_path") or "")
     if not repo:
         return
     try:
-        r = subprocess.run([sys.executable, script, "hook", "--repo", repo, "--session", session],
-                           timeout=30, capture_output=True, text=True)
-        if r.stdout.strip():
-            sys.stdout.write(r.stdout)
+        subprocess.run([sys.executable, script, "baseline", "--repo", repo, "--session", session],
+                       timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
