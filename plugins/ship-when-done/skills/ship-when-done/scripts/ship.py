@@ -5,7 +5,7 @@ Guardrails (never crossed): never commit or push the default branch (branch-firs
 feature branch; never merge; refuse to act on a detached/unborn HEAD or mid rebase/merge; no AI
 attribution in commits.
 """
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess, sys, time
 from shutil import which
 from urllib.parse import quote
 
@@ -22,6 +22,7 @@ DEFAULTS = {
     "default_base": None,
     "enabled": True,                  # set false to opt a repo OUT (engagement is otherwise automatic)
     "respect_merge_review": True,     # hold the PR until a sibling merge-review gate passes (if present)
+    "gate_timeout": 120,              # seconds before a gate run is declared timed out (never cached)
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
@@ -238,14 +239,20 @@ def read_text(path):
         return ""
 
 
-def run_gate(repo, cmd):
+def run_gate(repo, cmd, timeout=120):
+    """('pass'|'fail'|'skip'|'timeout', output tail, seconds) — the tail is persisted as evidence so a
+    red gate seen only inside a Stop hook is diagnosable after the fact."""
     if not cmd:
-        return "skip"
+        return "skip", "", 0.0
+    t0 = time.time()
     try:
-        p = subprocess.run(["bash", "-c", cmd], cwd=repo, capture_output=True, text=True, timeout=120)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return "fail"
-    return "pass" if p.returncode == 0 else "fail"
+        p = subprocess.run(["bash", "-c", cmd], cwd=repo, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"gate exceeded {timeout}s", round(time.time() - t0, 1)
+    except FileNotFoundError:
+        return "fail", "bash: not found", round(time.time() - t0, 1)
+    tail = ((p.stdout or "") + "\n" + (p.stderr or "")).strip()[-2000:]
+    return ("pass" if p.returncode == 0 else "fail"), tail, round(time.time() - t0, 1)
 
 
 def find_ticket(text, pattern):
@@ -460,6 +467,8 @@ def run_ladder(state, verdict, gate, cfg):
     elif not done and (verdict or {}).get("source") in ("marker", "todos"):
         if gate == "fail":
             res["blocked"].append("pr-withheld:gate-not-green")
+        elif gate == "timeout":
+            res["blocked"].append('pr-withheld:gate-timeout (raise "gate_timeout" in .git/ship-when-done.json)')
         elif gate == "skip" and cfg["require_green_gate_for_pr"]:
             res["blocked"].append('pr-withheld:no-gate-detected (set "gate" in .git/ship-when-done.json)')
 
@@ -703,7 +712,9 @@ def gate_cache_path(repo):
 
 
 def cached_gate(repo, cmd):
-    """The last verdict for this exact work-state + gate command, so idle Stops never re-run the gate."""
+    """Cache hit ONLY for a green verdict at this exact work-state + gate command. A red gate carries
+    no proof of determinism (timeout, flake, machine state) — caching it would pin a false red and
+    withhold the PR forever — so anything but 'pass' is re-run on the next Stop and self-heals."""
     if not cmd:
         return None
     try:
@@ -711,15 +722,18 @@ def cached_gate(repo, cmd):
     except Exception:
         return None
     head, dirty = work_state(repo)
-    if d.get("head") == head and d.get("dirty") == dirty and d.get("cmd") == cmd:
-        return d.get("verdict")
+    if d.get("head") == head and d.get("dirty") == dirty and d.get("cmd") == cmd and d.get("verdict") == "pass":
+        return "pass"
     return None
 
 
-def store_gate(repo, cmd, verdict):
+def store_gate(repo, cmd, verdict, tail="", secs=0.0):
+    """Every gate run leaves evidence (verdict + output tail + duration), whatever the verdict — only
+    'pass' is ever read back as a cache hit."""
     head, dirty = work_state(repo)
     try:
-        json.dump({"head": head, "dirty": dirty, "cmd": cmd, "verdict": verdict},
+        json.dump({"head": head, "dirty": dirty, "cmd": cmd, "verdict": verdict,
+                   "tail": tail, "secs": secs},
                   open(gate_cache_path(repo), "w"))
     except OSError:
         pass
@@ -802,12 +816,14 @@ def cmd_engage(args):
         return
     gate_cmd = detect_gate(repo, cfg)
     gate = cached_gate(repo, gate_cmd)
+    gate_tail, gate_secs, gate_ran = "", 0.0, False
     if gate is None:
-        gate = run_gate(repo, gate_cmd)
+        gate, gate_tail, gate_secs = run_gate(repo, gate_cmd, int(cfg.get("gate_timeout", 120)))
+        gate_ran = True
     verdict = evaluate_completion(state, gate, cfg, args.last_message or "", args.todos_done)
     res = run_ladder(state, verdict, gate, cfg)
-    if gate_cmd:
-        store_gate(repo, gate_cmd, gate)
+    if gate_cmd and gate_ran:
+        store_gate(repo, gate_cmd, gate, gate_tail, gate_secs)
     branch = res.get("branch")
     acts = res["actions"]
     if branch:
@@ -854,7 +870,7 @@ def main():
     s = sub.add_parser("state"); s.add_argument("--repo", default="."); s.set_defaults(fn=cmd_state)
     l = sub.add_parser("ladder")
     l.add_argument("--repo", default="."); l.add_argument("--config"); l.add_argument("--goal", default="")
-    l.add_argument("--verdict"); l.add_argument("--gate", default="skip", choices=["pass", "fail", "skip"])
+    l.add_argument("--verdict"); l.add_argument("--gate", default="skip", choices=["pass", "fail", "skip", "timeout"])
     l.set_defaults(fn=cmd_ladder)
     e = sub.add_parser("engage")
     e.add_argument("--repo", default="."); e.add_argument("--config"); e.add_argument("--goal", default="")

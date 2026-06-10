@@ -165,4 +165,33 @@ assert_eq "yarn test" "$(gd "$g/yarn")" "9. yarn.lock → yarn, not npm"
 assert_eq "NONE" "$(gd "$g/phpno")" "9. composer.json without a test script → no blind 'composer test'"
 assert_eq "composer test" "$(gd "$g/phpyes")" "9. composer.json with a test script → composer test"
 
+# --- 10. a timed-out gate is transient evidence: distinct reason, never cached ----------------------
+d10="$ROOT/b10"; new_repo "$d10" --remote; git -C "$d10" checkout -q -b feat
+printf '{"gate":"echo run >> %s; sleep 3","gate_timeout":1}' "$ROOT/gate10.log" > "$d10/.git/ship-when-done.json"; : > "$ROOT/gate10.log"
+python3 "$SHIP" baseline --repo "$d10" --session s10 >/dev/null
+echo w > "$d10/w.txt"
+python3 "$SHIP" mark-done --repo "$d10" --summary w >/dev/null
+out=$(python3 "$SHIP" engage --repo "$d10" --session s10)
+assert_contains 'gate-timeout' "$out" "10. timed-out gate → distinct visible reason (not gate-not-green)"
+python3 "$SHIP" engage --repo "$d10" --session s10 >/dev/null 2>&1
+assert_eq 2 "$(wc -l < "$ROOT/gate10.log" | tr -d ' ')" "10. timeout NOT cached → gate re-runs on the next Stop"
+
+# --- 10b. real usage: a transient red gate self-heals — only GREEN verdicts are cached --------------
+d="$ROOT/b10b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"gate":"echo run >> %s; test -f %s"}' "$ROOT/gate10b.log" "$ROOT/healed" > "$d/.git/ship-when-done.json"
+: > "$ROOT/gate10b.log"; rm -f "$ROOT/healed"
+python3 "$SHIP" baseline --repo "$d" --session sb >/dev/null
+echo w > "$d/w.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary "transient" >/dev/null
+out=$(python3 "$SHIP" engage --repo "$d" --session sb)
+assert_contains 'gate-not-green' "$out" "10b. red gate → PR withheld, visibly"
+assert_contains '"verdict": "fail"' "$(cat "$d/.git/swd-gate.json" 2>/dev/null)" "10b. the gate run leaves evidence (verdict persisted)"
+touch "$ROOT/healed"
+before=$(pr_creates)
+python3 "$SHIP" engage --repo "$d" --session sb >/dev/null 2>&1
+assert_eq 2 "$(wc -l < "$ROOT/gate10b.log" | tr -d ' ')" "10b. fail NOT cached → gate re-ran on the idle Stop and healed"
+assert_eq "$((before + 1))" "$(pr_creates)" "10b. healed gate → the PR opens without any tree change"
+python3 "$SHIP" engage --repo "$d" --session sb >/dev/null 2>&1
+assert_eq 2 "$(wc -l < "$ROOT/gate10b.log" | tr -d ' ')" "10b. green verdict IS cached → no re-run on the next idle Stop"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

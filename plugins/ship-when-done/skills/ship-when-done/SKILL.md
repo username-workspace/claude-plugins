@@ -132,7 +132,10 @@ take over, so the PR/MR step never hard-depends on a forge CLI.
   self-report. Keep `require_green_gate_for_pr: true`.
 - **No model call**, by design. The optional `judge_command` is yours to wire (e.g. an API-keyed
   judge) and is off by default.
-- Runs at end-of-turn and can run the gate then (capped at 120s, timeout = not green). The verdict is
-  cached per work-state, so idle turns never re-run it — it runs again only when the tree or HEAD
-  actually changed.
+- Runs at end-of-turn and can run the gate then (capped at `gate_timeout`, default 120s). **Only a
+  green verdict is cached** (per work-state) — a red gate carries no proof of determinism (timeout,
+  flake, machine load), so it is re-run on the next Stop and a transient red self-heals instead of
+  pinning the PR closed. A timeout is reported distinctly (`pr-withheld:gate-timeout`). Every gate run
+  persists its verdict, output tail and duration in `.git/swd-gate.json`, so a red seen only inside a
+  Stop hook is diagnosable after the fact.
 - Commits the full working tree (`git add -A`); start from a clean tree so milestones stay scoped.
