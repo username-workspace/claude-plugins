@@ -1,6 +1,6 @@
 {
   "name": "find-session",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Find and resume a past Claude Code session from a search term — decomposes the query into concept terms, cross-matches the local transcripts, and returns the best session ID with a ready `claude --resume` command. Interactive Claude Code; macOS and Linux.",
   "author": {
     "name": "Username",

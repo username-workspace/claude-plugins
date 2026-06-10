@@ -1,6 +1,6 @@
 ---
 name: find-session
-description: Find and resume a past Claude Code session from a search term (keyword, file name, topic, or ticket). Decomposes the query into concept terms, cross-matches them against the local ~/.claude/projects transcripts, ranks candidates by mentions and recency (with density and the dominant key as signals), and returns the best session ID with a ready `claude --resume <id>` command. Use when the user wants to reopen earlier work — "which session did we work on X", "find the session about Y", "retrouve la session où on a fait Z", "resume the conversation about", "what session touched <file>".
+description: Find and resume a past Claude Code session from a search term (keyword, file name, topic, or ticket). Decomposes the query into concept terms, cross-matches them against the local ~/.claude/projects transcripts, ranks candidates by mentions and recency (with density and the dominant key as signals), and returns the best session ID with a ready `claude --resume <id>` command. Use when the user wants to reopen earlier work — "which session did we work on X", "find the session about Y", "find the session where we did Z", "resume the conversation about", "what session touched <file>".
 argument-hint: <search term — keyword, file name, topic, or ticket>
 allowed-tools: Bash
 ---

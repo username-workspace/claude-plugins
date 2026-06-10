@@ -139,7 +139,7 @@ assert_contains 'green' "$out" "6. weakened/assert-True test flagged"
 # 7. run (the bg watcher): poll until the pipeline resolves, then exit with the verdict (read-only)
 d="$ROOT/run"; new_repo "$d"; before=$(count "$d" HEAD)
 out=$(STUB_CI=success python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
-assert_contains "ok c'est bon" "$out" "7. green → 'ok c'est bon'"
+assert_contains "ok, all good" "$out" "7. green → the wake word"
 assert_eq 0 "$rc" "7. green → exit 0"
 out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_contains 'ROOT CAUSE' "$out" "7. red → hands the failure back to fix the root cause"
@@ -152,7 +152,7 @@ assert_contains 'no open merge request' "$(STUB_CI=failed STUB_MR_STATE=CLOSED p
 printf '{"on_red":"notify"}' > "$d/.mr-watchdog.json"
 out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_absent 'ROOT CAUSE' "$out" "7. on_red=notify → no fix directive"
-assert_contains 'CI rouge' "$out" "7. on_red=notify → passive red report"
+assert_contains 'CI red' "$out" "7. on_red=notify → passive red report"
 assert_eq 1 "$rc" "7. on_red=notify → still exit 1"
 printf '{}' > "$d/.mr-watchdog.json"
 
