@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""repro-first — prove the bug before fixing it, then prove the fix with the SAME probe.
+"""proof-of-fix — prove the bug before fixing it, then prove the fix with the SAME probe.
 
 Deterministic plumbing for an evidence-first fix loop: `record` runs the reproduction command and
 accepts it only if it FAILS (a repro that passes proves nothing); `check` re-runs the exact same
@@ -8,7 +8,7 @@ that demonstrates the fix. State lives in .git (never committed). A UserPromptSu
 protocol into context when a prompt looks like a bug report (once per session per repo); a Stop hook
 re-runs an open repro itself when the work-state changed — auto-closing it on green, blocking once per
 work-state on red (capped, never an infinite Stop loop). Opt a repo out with enabled:false in
-.repro-first.json.
+.proof-of-fix.json.
 """
 import argparse, json, os, re, subprocess, sys
 
@@ -17,7 +17,7 @@ INTENT_RE = re.compile(
     r"corrige[rz]?|r[ée]pare[rz]?|fails?|failing|failure|[ée]choue|cass[ée]e?s?|"
     r"doesn'?t\s+work|ne\s+(marche|fonctionne)\s+(plus|pas))\b", re.I)
 
-NUDGE = ("[repro-first] This prompt looks like a bug/fix request. Evidence-first protocol: "
+NUDGE = ("[proof-of-fix] This prompt looks like a bug/fix request. Evidence-first protocol: "
          "(1) REPRODUCE before touching any code — write the smallest failing probe (a test or a "
          "command) and record it: `python3 {script} record --repo {repo} --cmd '<probe>'` (it is "
          "accepted only if it FAILS). (2) Fix the ROOT cause. (3) Prove it: `python3 {script} check "
@@ -40,7 +40,7 @@ def run(cmd, cwd, timeout=None):
 
 def load_config(repo):
     try:
-        return json.load(open(os.path.join(repo, ".repro-first.json")))
+        return json.load(open(os.path.join(repo, ".proof-of-fix.json")))
     except Exception:
         return {}
 
@@ -64,15 +64,17 @@ def repo_root(path):
 
 
 def work_state(repo):
-    """(HEAD sha, hash of the dirty set) — changes the moment the session commits or edits the tree."""
+    """(HEAD sha, hash of the dirty CONTENT) — porcelain alone misses a re-edit of an already-dirty
+    file (M stays M), so the tracked diff is hashed too; a content-only fix re-triggers the Stop probe."""
     import hashlib
     rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
     _, porcelain, _ = run(["git", "status", "--porcelain"], repo)
-    return (head if rc == 0 else ""), hashlib.sha1(porcelain.encode()).hexdigest()[:12]
+    _, diff, _ = run(["git", "diff", "HEAD"], repo)
+    return (head if rc == 0 else ""), hashlib.sha1((porcelain + "\n" + diff).encode()).hexdigest()[:12]
 
 
 def state_path(repo):
-    return os.path.join(git_dir(repo), "repro-first.json")
+    return os.path.join(git_dir(repo), "proof-of-fix.json")
 
 
 def read_state(repo):
@@ -104,29 +106,29 @@ def cmd_record(args):
     repo = args.repo
     rc, tail = run_probe(repo, args.cmd)
     if rc == 0:
-        print("[repro-first] ✗ does not reproduce — the probe exited 0. A repro must FAIL before the "
+        print("[proof-of-fix] ✗ does not reproduce — the probe exited 0. A repro must FAIL before the "
               "fix, otherwise it proves nothing. Sharpen the probe (or the bug is already gone).")
         sys.exit(1)
     write_state(repo, {"cmd": args.cmd, "recorded_rc": rc, "status": "open", "tail": tail,
                        "nag": {}, "attempts": 0})
-    print(f"[repro-first] ✓ failing repro recorded (exit {rc}) — fix the root cause, then run check")
+    print(f"[proof-of-fix] ✓ failing repro recorded (exit {rc}) — fix the root cause, then run check")
 
 
 def cmd_check(args):
     repo = args.repo
     st = read_state(repo)
     if not st or not st.get("cmd"):
-        print("[repro-first] no recorded repro — run record first")
+        print("[proof-of-fix] no recorded repro — run record first")
         sys.exit(1)
     rc, tail = run_probe(repo, st["cmd"])
     if rc == 0:
         st["status"] = "proven"
         write_state(repo, st)
-        print("[repro-first] ✓ fix proven — the recorded repro now passes")
+        print("[proof-of-fix] ✓ fix proven — the recorded repro now passes")
         return
     st["tail"] = tail
     write_state(repo, st)
-    print(f"[repro-first] ✗ still failing (exit {rc}) — the recorded repro does not pass yet:\n{tail}")
+    print(f"[proof-of-fix] ✗ still failing (exit {rc}) — the recorded repro does not pass yet:\n{tail}")
     sys.exit(1)
 
 
@@ -139,7 +141,7 @@ def cmd_clear(args):
         os.remove(state_path(args.repo))
     except OSError:
         pass
-    print("[repro-first] cleared")
+    print("[proof-of-fix] cleared")
 
 
 def cmd_nudge(args):
@@ -152,7 +154,7 @@ def cmd_nudge(args):
         return
     if not os.path.isdir(git_dir(repo)):
         return
-    marker = os.path.join(git_dir(repo), "repro-first-nudge.json")
+    marker = os.path.join(git_dir(repo), "proof-of-fix-nudge.json")
     try:
         if json.load(open(marker)).get("session") == args.session:
             return
@@ -189,7 +191,7 @@ def cmd_hook(args):
     if rc == 0:
         st["status"] = "proven"
         write_state(repo, st)
-        print(json.dumps({"systemMessage": "[repro-first] ✓ fix proven — the recorded repro now passes"}))
+        print(json.dumps({"systemMessage": "[proof-of-fix] ✓ fix proven — the recorded repro now passes"}))
         return
     st["tail"] = tail
     write_state(repo, st)
@@ -201,15 +203,8 @@ def cmd_hook(args):
     print(json.dumps({"decision": "block", "reason": reason}))
 
 
-def cmd_resolve(args):
-    cwd = args.cwd
-    r = git_toplevel(cwd) if cwd else None
-    if r:
-        print(r)
-
-
 def main():
-    ap = argparse.ArgumentParser(description="repro-first")
+    ap = argparse.ArgumentParser(description="proof-of-fix")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(name, fn):
@@ -227,9 +222,6 @@ def main():
     common("hook", cmd_hook)
     n = common("nudge", cmd_nudge)
     n.add_argument("--prompt", default="")
-    rv = sub.add_parser("resolve")
-    rv.add_argument("--cwd", default="")
-    rv.set_defaults(fn=cmd_resolve)
 
     args = ap.parse_args()
     if getattr(args, "repo", None) is not None:

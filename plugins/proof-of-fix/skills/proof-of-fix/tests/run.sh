@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# repro-first test suite — the evidence-first loop on real throwaway git repos, driven through the
+# proof-of-fix test suite — the evidence-first loop on real throwaway git repos, driven through the
 # real hooks: record refuses a passing probe, check proves with the same probe, the prompt hook
 # nudges once per session on bug-shaped prompts, and the Stop hook re-runs an open repro itself
 # (auto-prove on green, bounded block on red).
 set -u
 PLUGIN="$(cd "$(dirname "$0")/../../.." && pwd)"
-REPRO="$PLUGIN/skills/repro-first/scripts/repro.py"
+REPRO="$PLUGIN/skills/proof-of-fix/scripts/repro.py"
 PROMPT_HOOK="$PLUGIN/hooks/prompt-hook.py"
 STOP_HOOK="$PLUGIN/hooks/stop-hook.py"
 ROOT="$(mktemp -d)"
@@ -23,14 +23,14 @@ mkrepo(){ local d="$1"; mkdir -p "$d"; git -C "$d" init -q -b main
 prompt_payload(){ printf '{"cwd":"%s","session_id":"%s","prompt":"%s"}' "$1" "$2" "$3"; }
 stop_payload(){ printf '{"cwd":"%s","session_id":"%s"}' "$1" "$2"; }
 
-echo "repro-first tests"
+echo "proof-of-fix tests"
 
 # --- 1. record refuses a probe that passes (a repro must FAIL) -------------------------------------
 d="$ROOT/t1"; mkrepo "$d"
 out=$(python3 "$REPRO" record --repo "$d" --cmd "true" 2>&1); rc=$?
 assert_eq 1 "$rc" "1. passing probe → record refused (exit 1)"
 assert_contains 'does not reproduce' "$out" "1. refusal says why"
-[ -f "$d/.git/repro-first.json" ] && ko "1. no state written on refusal" || ok "1. no state written on refusal"
+[ -f "$d/.git/proof-of-fix.json" ] && ko "1. no state written on refusal" || ok "1. no state written on refusal"
 
 # --- 2. record accepts a failing probe; check fails until fixed, passes after ----------------------
 out=$(python3 "$REPRO" record --repo "$d" --cmd "test -f fixed.txt" 2>&1); rc=$?
@@ -88,21 +88,32 @@ for i in 1 2 3 4 5 6 7; do
 done
 assert_eq 5 "$blocks" "5. blocks capped at 5 even across changing work-states"
 
+# --- 5b. a content-only re-edit of an already-dirty file re-triggers the Stop probe -----------------
+d5b="$ROOT/t5b"; mkrepo "$d5b"
+echo v1 > "$d5b/app.txt"; git -C "$d5b" add -A; git -C "$d5b" commit -qm app
+python3 "$REPRO" record --repo "$d5b" --cmd "grep -q fixed app.txt" >/dev/null 2>&1
+echo "v2 still broken" > "$d5b/app.txt"
+out=$(stop_payload "$d5b" s1 | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$STOP_HOOK")
+assert_contains '"decision": "block"' "$out" "5b. dirty file, probe red → block"
+echo "v3 fixed" > "$d5b/app.txt"
+out=$(stop_payload "$d5b" s1 | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$STOP_HOOK")
+assert_contains 'fix proven' "$out" "5b. same file re-edited (M stays M) → probe re-run, auto-proven"
+
 # --- 6. opt-out, clear, root anchoring --------------------------------------------------------------
 d6="$ROOT/t6"; mkrepo "$d6"
-printf '{"enabled":false}' > "$d6/.repro-first.json"
+printf '{"enabled":false}' > "$d6/.proof-of-fix.json"
 out=$(prompt_payload "$d6" s1 "fix the bug" | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$PROMPT_HOOK")
 assert_eq "" "$out" "6. enabled:false → prompt hook silent"
-rm "$d6/.repro-first.json"
+rm "$d6/.proof-of-fix.json"
 python3 "$REPRO" record --repo "$d6" --cmd "false" >/dev/null 2>&1
-printf '{"enabled":false}' > "$d6/.repro-first.json"
+printf '{"enabled":false}' > "$d6/.proof-of-fix.json"
 out=$(stop_payload "$d6" s1 | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$STOP_HOOK")
 assert_eq "" "$out" "6. enabled:false → stop hook silent"
 python3 "$REPRO" clear --repo "$d6" >/dev/null
-[ -f "$d6/.git/repro-first.json" ] && ko "6. clear removes the state" || ok "6. clear removes the state"
+[ -f "$d6/.git/proof-of-fix.json" ] && ko "6. clear removes the state" || ok "6. clear removes the state"
 d7="$ROOT/t7"; mkrepo "$d7"; mkdir -p "$d7/src/deep"
 python3 "$REPRO" record --repo "$d7/src/deep" --cmd "false" >/dev/null 2>&1
-[ -f "$d7/.git/repro-first.json" ] && ok "6. root-anchor: record from subdir → state at repo root" || ko "6. root-anchor subdir"
+[ -f "$d7/.git/proof-of-fix.json" ] && ok "6. root-anchor: record from subdir → state at repo root" || ko "6. root-anchor subdir"
 
 # --- 7. check without a recorded repro --------------------------------------------------------------
 d8="$ROOT/t8"; mkrepo "$d8"

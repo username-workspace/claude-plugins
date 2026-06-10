@@ -1,16 +1,16 @@
 ---
-name: repro-first
+name: proof-of-fix
 description: >-
   Evidence-first bug fixing: prove the bug BEFORE touching code (a recorded probe that must FAIL),
   fix the root cause, then prove the fix with the SAME probe (`check` passes only when it runs
   green). Auto-engaging: a bug-shaped prompt ("fix", "bug", "regression", "ça casse", "échoue", …)
   injects the protocol into context, and a Stop hook re-runs an open repro itself — auto-closing it
   on green, handing back the failing output on red (bounded, never a loop). Use when fixing any bug,
-  when asked to validate a fix empirically, or via /repro-first. Horizontal: any repo, any stack —
+  when asked to validate a fix empirically, or via /proof-of-fix. Horizontal: any repo, any stack —
   the probe is whatever command demonstrates the bug. Opt out per repo.
 ---
 
-# repro-first
+# proof-of-fix
 
 A fix you cannot demonstrate is a guess. This skill turns "trust me, it's fixed" into two runs of the
 same probe: **red before** the change, **green after** — the discipline that separates a root-cause
@@ -46,8 +46,8 @@ fit; the discipline is the same.
   fixing. One attempt per work-state, capped at 5 per repro — an unconverging fix ends the turn, it
   never loops the Stop hook.
 
-State lives in `.git/repro-first.json` (never committed, one active repro per repo — the latest
-recorded wins). Opt a repo out with `{ "enabled": false }` in `.repro-first.json`.
+State lives in `.git/proof-of-fix.json` (never committed, one active repro per repo — the latest
+recorded wins). Opt a repo out with `{ "enabled": false }` in `.proof-of-fix.json`.
 
 ## Manual / debug
 

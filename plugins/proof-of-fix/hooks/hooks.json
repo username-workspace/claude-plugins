@@ -18,7 +18,7 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.py\"",
             "timeout": 180,
-            "statusMessage": "repro-first: re-running the recorded repro…"
+            "statusMessage": "proof-of-fix: re-running the recorded repro…"
           }
         ]
       }

@@ -11,7 +11,7 @@ def main():
     except Exception:
         return
     root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    script = os.path.join(root, "skills", "repro-first", "scripts", "repro.py")
+    script = os.path.join(root, "skills", "proof-of-fix", "scripts", "repro.py")
     cwd = payload.get("cwd") or ""
     if not cwd:
         return

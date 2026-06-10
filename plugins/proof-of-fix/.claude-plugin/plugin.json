@@ -1,12 +1,12 @@
 {
-  "name": "repro-first",
+  "name": "proof-of-fix",
   "version": "1.0.0",
   "description": "Evidence-first bug fixing: prove the bug BEFORE touching code (record runs the probe and accepts it only if it FAILS), fix the root cause, then prove the fix with the SAME probe (check passes only when it runs green) — red before, green after, same command. Auto-engaging: a bug-shaped prompt (en/fr) injects the protocol into context once per session per repo, and a Stop hook re-runs an open repro itself — auto-closing it on green, blocking with the failing output on red (one attempt per work-state, capped — never a Stop loop). The best probe is a real test committed with the fix, so the repro becomes a permanent regression guard. State in .git, never committed; opt out per repo. Horizontal: any repo, any stack — git + Python stdlib only.",
   "author": {
     "name": "Username",
     "email": "admin@username.digital"
   },
-  "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/repro-first",
+  "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/proof-of-fix",
   "repository": "https://github.com/username-workspace/skills",
   "license": "MIT"
 }

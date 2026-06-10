@@ -78,6 +78,14 @@
       "description": "Adversarial merge-readiness review that scores a diff 0-100 across security, correctness, quality and maintainability and runs iteratively until the score clears the threshold (default 80). Two outcome modes: LOCAL (interactive) re-derives each finding, applies the attested ones (high-confidence, file:line-cited) as minimal root-cause fixes and loops until viable — contestable pure-logic findings are surfaced for you to arbitrate, never silently applied; REMOTE (diff injected by a CI/bot runner) is strictly read-only and just emits the verdict + machine-readable state. An asymmetric trust model treats diff, descriptions and comments as untrusted data that may only raise scrutiny, never lower the verdict. Self-engaging & session-scoped: a pre-push gate reviews the branch THIS session is about to push (never a stale or someone else's); a fake-green guard blocks deleted/weakened tests, --no-verify, || true, lowered thresholds; opt out per repo. Forge-agnostic (gh/glab). The review step between ship-when-done and mr-watchdog.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/merge-review"
+    },
+    {
+      "name": "proof-of-fix",
+      "version": "1.0.0",
+      "source": "./plugins/proof-of-fix",
+      "description": "Evidence-first bug fixing: prove the bug BEFORE touching code (record runs the probe and accepts it only if it FAILS), fix the root cause, then prove the fix with the SAME probe (check passes only when it runs green) — red before, green after, same command. Auto-engaging: a bug-shaped prompt (en/fr) injects the protocol into context once per session per repo, and a Stop hook re-runs an open repro itself — auto-closing it on green, blocking with the failing output on red (one attempt per work-state, capped — never a Stop loop). The best probe is a real test committed with the fix, so the repro becomes a permanent regression guard. State in .git, never committed; opt out per repo. Horizontal: any repo, any stack — git + Python stdlib only.",
+      "category": "development",
+      "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/proof-of-fix"
     }
   ]
 }
