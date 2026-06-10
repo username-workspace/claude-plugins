@@ -39,14 +39,26 @@ def run(cmd, cwd, check=False):
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
+# gate/judge_command are shell commands: never honored from the (cloneable) working-tree file,
+# only from .git/ (never cloned) or an explicitly passed config
+COMMAND_FIELDS = ("gate", "judge_command")
+
+
 def load_config(repo, path=None):
     cfg = dict(DEFAULTS)
-    for p in [os.path.join(repo, ".ship-when-done.json"), path]:
+    sources = [(os.path.join(repo, ".ship-when-done.json"), False),
+               (os.path.join(git_dir(repo), "ship-when-done.json"), True),
+               (path, True)]
+    for p, trusted in sources:
         if p and os.path.isfile(p):
             try:
-                cfg.update(json.load(open(p)))
+                data = json.load(open(p))
             except Exception:
-                pass
+                continue
+            if not trusted:
+                for f in COMMAND_FIELDS:
+                    data.pop(f, None)
+            cfg.update(data)
     return cfg
 
 

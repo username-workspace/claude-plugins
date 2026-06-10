@@ -77,17 +77,19 @@ To plug an independent judge, set `judge_command` (your own command) — off by 
 ## Configure (optional — it engages on its own)
 
 No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
-> ⚠️ `gate` and `judge_command` are shell commands run on **every** engaged turn. Set
-> `{ "enabled": false }` in any repo where you don't want that.
+> 🔒 `gate` and `judge_command` are shell commands run on **every** engaged turn, so they are **never
+> read from the working-tree file** (which arrives with any clone). They are honored only from
+> `.git/ship-when-done.json` (local to your clone, never committed) or an explicitly passed
+> `--config` — set them there; in `.ship-when-done.json` they are ignored.
 ```jsonc
 {
   "enabled": true,              // set false to opt this repo OUT (engagement is otherwise automatic)
   "on_done": "draft-pr",        // draft-pr (default) | ready-pr | suggest
-  "gate": null,                  // auto-detected (pnpm ts:check / npm test / composer test…) unless set
+  "gate": null,                  // auto-detected (pnpm ts:check / npm test / composer test…) unless set — .git/ or --config only
   "ticket_pattern": "\\b([A-Z][A-Z0-9]+-\\d+)\\b",
   "commit_convention": "conventional", // conventional | ticket ([TICKET] type: desc)
   "require_green_gate_for_pr": true,
-  "judge_command": null,        // optional independent judge — YOUR own (API-keyed) command; off by default
+  "judge_command": null,        // optional independent judge — YOUR own (API-keyed) command; off by default — .git/ or --config only
   "skip_marker": "wip/",
   "forge": null,                 // github | gitlab | bitbucket — auto-detected from the remote unless set
   "default_base": null,          // PR/MR target branch — defaults to the remote's default branch

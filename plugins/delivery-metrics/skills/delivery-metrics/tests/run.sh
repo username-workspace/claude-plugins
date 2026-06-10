@@ -214,6 +214,18 @@ J="$(collect "$d" 2026-01-01 2026-01-31 3m)"
 assert_eq '["Jane Doe"]' "$(printf '%s' "$J" | get "json.dumps(sorted(o['developers']))")" "14. auto-loaded alias"
 assert_eq "1" "$(printf '%s' "$J" | get "o['developers']['Jane Doe']['tickets']")" "14. auto-loaded ticket pattern"
 
+# 14b. SECURITY: availability_command in the AUTO-LOADED repo config is never executed
+d="$ROOT/autocmd"; git_init "$d"
+commit_as "$d" Jane jane@x.com 2026-01-05 "PROJ-1 work" a
+printf '{ "availability_command": "touch pwned; echo {}" }' > "$d/.delivery-metrics.json"
+collect "$d" 2026-01-01 2026-01-31 3m >/dev/null
+[ ! -f "$d/pwned" ] && ok "14b. auto-loaded availability_command NOT executed (RCE blocked)" || ko "14b. auto-loaded availability_command executed (RCE)"
+cat > "$ROOT/avcfg.json" <<'EOF'
+{ "availability_command": "printf '{\"holidays\":[\"2026-01-01\"],\"leaves\":[]}'" }
+EOF
+J="$(collect "$d" 2026-01-01 2026-01-31 3m "$ROOT/avcfg.json")"
+assert_eq '["2026-01-01"]' "$(printf '%s' "$J" | get "json.dumps(o['metadata']['holidays'])")" "14b. explicit-config availability_command still runs"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 15. submodule-workspace mode: detect repos via .gitmodules + aggregate
 d="$ROOT/ws"; mkdir -p "$d"

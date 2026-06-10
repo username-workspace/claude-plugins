@@ -167,7 +167,13 @@ def load_config(root, explicit):
     path = explicit or os.path.join(root, ".delivery-metrics.json")
     if path and os.path.isfile(path):
         try:
-            cfg.update({k: v for k, v in json.load(open(path, encoding="utf-8")).items() if v is not None})
+            data = {k: v for k, v in json.load(open(path, encoding="utf-8")).items() if v is not None}
+            if not explicit and data.pop("availability_command", None):
+                print("WARN: availability_command ignored — it is a shell command, never honored "
+                      "from the repo's auto-loaded .delivery-metrics.json (a cloned file would "
+                      "execute code); pass the config file explicitly to enable it",
+                      file=sys.stderr)
+            cfg.update(data)
         except (ValueError, OSError) as e:
             print(f"WARN: config {path} ignored: {e}", file=sys.stderr)
     if not cfg["repos"]:

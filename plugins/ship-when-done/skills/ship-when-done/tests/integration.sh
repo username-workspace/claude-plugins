@@ -45,7 +45,7 @@ git -C "$d" config remote.origin.pushurl "$d.git"                    # real push
 git -C "$d" config remote.origin.url https://github.com/test/repo.git  # forge detection reads the fetch URL
 git -C "$d" push -q -u origin main 2>/dev/null
 git -C "$d" checkout -q -b zv-77-greeting
-printf '{"gate":"true"}' > "$d/.ship-when-done.json"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
 python3 "$SHIP" baseline --repo "$d" --session itest >/dev/null    # UserPromptSubmit: turn-start baseline
 echo "hello world" > "$d/hello.txt"            # the "agent" did this (the tree now changes vs baseline)
 echo "{\"cwd\":\"$d\",\"session_id\":\"itest\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | CLAUDE_PLUGIN_ROOT="$PLUGIN" python3 "$HOOK"
@@ -82,7 +82,7 @@ git -C "$d5" config remote.origin.pushurl "$d5.git"
 git -C "$d5" config remote.origin.url https://gitlab.com/test/repo.git
 git -C "$d5" push -q -u origin main 2>/dev/null
 git -C "$d5" checkout -q -b zv-77-greeting
-printf '{"gate":"true"}' > "$d5/.ship-when-done.json"
+printf '{"gate":"true"}' > "$d5/.git/ship-when-done.json"
 python3 "$SHIP" baseline --repo "$d5" --session itest >/dev/null
 echo "hello world" > "$d5/hello.txt"
 out=$(echo "{\"cwd\":\"$d5\",\"session_id\":\"itest\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | env PATH="$ROOT/realbin" CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PY" "$HOOK")
