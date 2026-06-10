@@ -87,6 +87,8 @@ case "$cmd" in
         *)         [ -z "$name" ] && name="$1"; shift ;;
       esac
     done
+    # names become file paths and pkill patterns — only ever use the slugified form
+    name="${name:+$(slugify "$name")}"
     [ -n "$name" ] || name="$(nato_name)"
     [ -e "$STATE_DIR/$name.spawn" ] && die "session '$name' already exists (stop it first)"
     cwd="${CRS_SPAWN_CWD:-$PWD}"
@@ -114,12 +116,14 @@ case "$cmd" in
     tx="$(find "$projects" -maxdepth 2 -name "$id.jsonl" 2>/dev/null | head -1)"
     [ -n "$tx" ] || die "no transcript for session '$id' under $projects (check the id)"
     # recover Claude Code's own session title (last ai-title) so the resume is recognizable, not random
-    title="$(grep -o '"aiTitle": *"[^"]*"' "$tx" | tail -1 | sed 's/.*"aiTitle": *"//; s/"$//')"
+    # `|| true`: a grep miss must fall through to the fallbacks, not errexit under pipefail
+    title="$(grep -o '"aiTitle": *"[^"]*"' "$tx" | tail -1 | sed 's/.*"aiTitle": *"//; s/"$//' || true)"
     display="${name:-${title:-resumed session}}"
-    [ -n "$name" ] || name="$(slugify "$title")"
+    # names become file paths and pkill patterns — only ever use the slugified form
+    name="$(slugify "${name:-$title}")"
     [ -n "$name" ] || name="$(nato_name)"
     [ -e "$STATE_DIR/$name.spawn" ] && die "session '$name' already exists (stop it first)"
-    rcwd="$(grep -m1 -o '"cwd":"[^"]*"' "$tx" | sed 's/^"cwd":"//; s/"$//')"
+    rcwd="$(grep -m1 -o '"cwd":"[^"]*"' "$tx" | sed 's/^"cwd":"//; s/"$//' || true)"
     cwd="${CRS_SPAWN_CWD:-${rcwd:-$PWD}}"
     [ -d "$cwd" ] || die "session cwd '$cwd' not found (override with CRS_SPAWN_CWD)"
     model_args=(); [ -n "$model" ] && model_args=(--model "$model")
@@ -141,11 +145,12 @@ case "$cmd" in
     done
     ;;
   stop)
-    name="${1:-}"; [ -n "$name" ] || die "stop needs a <name>"
+    name="$(slugify "${1:-}")"; [ -n "$name" ] || die "stop needs a <name>"
     [ -f "$STATE_DIR/$name.spawn" ] || die "no session $name"
     sp="$(spawn_get "$name" subshell)"
     if is_running "$sp"; then pkill -P "$sp" 2>/dev/null || true; kill "$sp" 2>/dev/null || true; fi
-    pkill -f "remote-control $name" 2>/dev/null || true
+    # trailing space anchors the name (launch always passes args after it) so 'alpha' ≠ 'alphabet'
+    pkill -f "remote-control $name " 2>/dev/null || true
     rm -f "$STATE_DIR/$name.spawn" "$STATE_DIR/$name.log"
     echo "stopped $name"
     ;;

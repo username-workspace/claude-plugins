@@ -178,6 +178,40 @@ sp="$(sed -n 's/^subshell=//p' "$STATE/nomodel.spawn" 2>/dev/null | head -1)"
 [ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
 run stop nomodel >/dev/null 2>&1 || true
 
+# 20. resume happy path — transcript WITH aiTitle → name recovered from the title
+mkdir -p "$PROJECTS/-tmp-proj"
+printf '{"cwd":"/tmp","aiTitle": "Fix The Payload Hash"}\n' > "$PROJECTS/-tmp-proj/sess-with-title.jsonl"
+: > "$ROOT/script.cap"
+out=$(run resume sess-with-title)
+for _ in $(seq 1 50); do [ -s "$ROOT/script.cap" ] && break; sleep 0.1; done
+assert_contains "fix-the-payload-hash" "$out" "20. resume → handle slugified from aiTitle"
+assert_contains "--resume sess-with-title" "$(cat "$ROOT/script.cap" 2>/dev/null)" "20. resume → claude --resume <id>"
+assert_contains "--fork-session" "$(cat "$ROOT/script.cap" 2>/dev/null)" "20. resume → forks by default"
+sp="$(sed -n 's/^subshell=//p' "$STATE/fix-the-payload-hash.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop fix-the-payload-hash >/dev/null 2>&1 || true
+
+# 21. resume happy path — transcript WITHOUT aiTitle → falls back to a NATO name (regression:
+# a grep miss under pipefail used to kill the script before the fallback ran)
+printf '{"cwd":"/tmp"}\n' > "$PROJECTS/-tmp-proj/sess-no-title.jsonl"
+: > "$ROOT/script.cap"
+out=$(run resume sess-no-title); rc=$?
+assert_eq 0 "$rc" "21. resume without aiTitle → exit 0 (no pipefail death)"
+assert_contains "resumed sess-no-title" "$out" "21. resume without aiTitle → resumes with fallback name"
+handle="$(echo "$out" | head -1)"
+sp="$(sed -n 's/^subshell=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop "$handle" >/dev/null 2>&1 || true
+
+# 22. SECURITY: user-supplied name is slugified — no path traversal out of STATE_DIR
+out=$(run spawn "../outside/evil")
+handle="$(echo "$out" | head -1)"
+assert_eq "outside-evil" "$handle" "22. hostile name slugified"
+[ ! -e "$ROOT/outside" ] && ok "22. nothing written outside STATE_DIR" || ko "22. path traversal: wrote outside STATE_DIR"
+sp="$(sed -n 's/^subshell=//p' "$STATE/$handle.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop "$handle" >/dev/null 2>&1 || true
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"
