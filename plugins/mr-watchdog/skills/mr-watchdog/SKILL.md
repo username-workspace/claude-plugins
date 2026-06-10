@@ -4,7 +4,7 @@ description: >-
   Triggered by an open merge request, mr-watchdog watches the MR's remote CI as a background task your
   MAIN session owns — read-only: it never commits, pushes, or merges. The watcher is launched with
   run_in_background and tracked by the harness, which re-invokes your session the moment it resolves, so
-  the verdict reaches you IN the conversation: green → "ok c'est bon"; red → the failing job log so your
+  the verdict reaches you IN the conversation: green → a one-line confirmation; red → the failing job log so your
   session fixes the *root cause* (no bypass), with `verify` to self-check the fix for fake-green. Engages
   only a branch THIS session pushed; opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab).
   The CI-watch step after ship-when-done → merge-review.
@@ -20,7 +20,7 @@ the **harness tracks it across turns**, and when it exits the harness **re-invok
 the result. There is no detached daemon, no status file, no polling-by-hook — the harness's own
 background-task tracking is the delivery channel.
 
-It is **read-only** — it never commits, pushes, or merges. On green it tells you `ok c'est bon`; on red
+It is **read-only** — it never commits, pushes, or merges. On green it tells you `CI green`; on red
 it hands back the failing job log so your session fixes the **root cause** (no bypass).
 
 ## How it fires
@@ -47,11 +47,11 @@ session with that output:
 | CI status | What `run` does |
 |---|---|
 | `pending` | wait `poll_interval`, poll again |
-| `success` | print `ok c'est bon — CI au vert`, **exit 0** |
+| `success` | print `CI green on '<branch>'`, **exit 0** |
 | `failed`  | print the failing job log + the fix directive, **exit 1** |
 | MR closed / HEAD moved | print why, exit (a fresh watcher starts after the next push) |
 
-When your session is re-invoked: **green** → tell the user `ok c'est bon`; **red** → fix the ROOT cause
+When your session is re-invoked: **green** → report CI green to the user; **red** → fix the ROOT cause
 from the log (no bypass), run `verify`, push the fix. The push re-triggers the chain, and a fresh
 watcher is launched for the new HEAD.
 

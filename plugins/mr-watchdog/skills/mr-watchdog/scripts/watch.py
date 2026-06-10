@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """mr-watchdog — once a merge request is open, watch its CI in a background task the MAIN session owns,
-and when it resolves hand the verdict back to that session: green → 'ok c'est bon', red → the failing
+and when it resolves hand the verdict back to that session: green → 'CI green', red → the failing
 job log so the session fixes the ROOT cause (no bypass).
 
 The watcher (`run`) is a foreground poll loop the session launches with run_in_background; the harness
@@ -487,7 +487,7 @@ def launch_instruction(repo):
     return ("An open merge request for this branch has CI running. Launch the watcher in the BACKGROUND "
             "so you're told the moment it resolves — run this with run_in_background=true, then carry on "
             "(do NOT wait on it):\n  " + cmd + "\nWhen it exits, its result comes back to you: green → "
-            "tell me 'ok c'est bon — CI au vert'; red → fix the ROOT cause from its log (no bypass), run "
+            "report it to me; red → fix the ROOT cause from its log (no bypass), run "
             "verify, and push the fix.")
 
 
@@ -523,7 +523,7 @@ def cmd_run(args):
                   "(check gh/glab auth) — not a CI verdict")
             return
         if status == "success":
-            print(f"[mr-watchdog] ok c'est bon — CI au vert sur '{branch}'")
+            print(f"[mr-watchdog] CI green on '{branch}'")
             return
         if status == "failed":
             log = failing_log(repo, forge, branch)
@@ -531,7 +531,7 @@ def cmd_run(args):
                 print(fix_instruction(repo, branch, log))
             else:
                 tail = "\n".join(log.splitlines()[-int(cfg["log_lines"]):])
-                print(f"[mr-watchdog] CI rouge sur '{branch}' — à corriger. Log du job en échec :\n{tail}")
+                print(f"[mr-watchdog] CI red on '{branch}' — needs a fix. Failing job log:\n{tail}")
             sys.exit(1)
         if time.time() > deadline:
             print(f"[mr-watchdog] stopped: timeout while CI was {status}")

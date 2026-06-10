@@ -41,7 +41,7 @@
     },
     {
       "name": "find-session",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./plugins/find-session",
       "description": "Find and resume a past Claude Code session from a search term — decomposes the query, cross-matches local transcripts, and returns the best session ID with a ready claude --resume command. Project-aware, macOS and Linux.",
       "category": "development",
@@ -65,9 +65,9 @@
     },
     {
       "name": "mr-watchdog",
-      "version": "2.1.0",
+      "version": "2.1.1",
       "source": "./plugins/mr-watchdog",
-      "description": "Triggered by an open merge request, mr-watchdog watches the MR's remote CI as a background task your MAIN session owns: the watcher is launched with run_in_background and tracked by the harness, which re-invokes your session the moment the pipeline resolves — so the verdict reaches you IN the conversation (no detached daemon, no status file, no polling). Strictly read-only — never commits, pushes, or merges. Green → 'ok c'est bon'; red → it hands back the failing job log so your session fixes the ROOT cause (no bypass), with a verify command to self-check the fix for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds). A Stop hook nudges the session to launch the watcher, once per pipeline HEAD. Engages on its own only for a branch this session pushed (never a stale or someone else's MR); opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The CI-watch step after ship-when-done → merge-review.",
+      "description": "Triggered by an open merge request, mr-watchdog watches the MR's remote CI as a background task your MAIN session owns: the watcher is launched with run_in_background and tracked by the harness, which re-invokes your session the moment the pipeline resolves — so the verdict reaches you IN the conversation (no detached daemon, no status file, no polling). Strictly read-only — never commits, pushes, or merges. Green → a one-line confirmation; red → it hands back the failing job log so your session fixes the ROOT cause (no bypass), with a verify command to self-check the fix for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds). A Stop hook nudges the session to launch the watcher, once per pipeline HEAD. Engages on its own only for a branch this session pushed (never a stale or someone else's MR); opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The CI-watch step after ship-when-done → merge-review.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/mr-watchdog"
     },

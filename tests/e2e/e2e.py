@@ -221,7 +221,7 @@ def run_scenario(sc, tag):
         sh(["git", "-C", workdir, "commit", "-qm", "fix: heal the pipeline"], check=True)
         sh(["git", "-C", workdir, "push", "-q", "origin", branch], check=True)
         rc, verdict = watch_until_resolved(workdir)
-    expect(rc == 0 and "CI au vert" in verdict, "the pipeline must end green", verdict)
+    expect(rc == 0 and "CI green" in verdict, "the pipeline must end green", verdict)
     if sc["gate"] == "auto":
         ev = json.load(open(os.path.join(workdir, ".git", "swd-gate.json")))
         expect(ev.get("cmd") == project["expected_gate"] and ev.get("verdict") == "pass",
