@@ -61,7 +61,9 @@ The completion check makes **no extra model call**. `done` requires **either**:
 
 …and is **always cross-checked**: the gate must actually run **green** and no fresh `TODO/FIXME` may
 have landed. Without an explicit signal it still commits & pushes (anti-loss) but opens no PR. When
-unsure → **not done**. The marker is consumed once a PR opens.
+unsure → **not done**. The marker is consumed once a PR opens. When you claim done but no gate is
+detectable, the withheld PR is said out loud (`pr-withheld:no-gate-detected`) instead of failing
+silently — set `gate` in `.git/ship-when-done.json` to unlock it.
 
 To plug an independent judge, set `judge_command` (your own command) — off by default; it can only
 *downgrade* `done`.
@@ -85,7 +87,7 @@ No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
 {
   "enabled": true,              // set false to opt this repo OUT (engagement is otherwise automatic)
   "on_done": "draft-pr",        // draft-pr (default) | ready-pr | suggest
-  "gate": null,                  // auto-detected (pnpm ts:check / npm test / composer test…) unless set — .git/ or --config only
+  "gate": null,                  // auto-detected (pnpm/bun/yarn/npm scripts, composer test, pytest, go test, cargo test, make test) unless set — .git/ or --config only
   "ticket_pattern": "\\b([A-Z][A-Z0-9]+-\\d+)\\b",
   "commit_convention": "conventional", // conventional | ticket ([TICKET] type: desc)
   "require_green_gate_for_pr": true,
@@ -100,9 +102,14 @@ No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
 If the **merge-review** plugin is active in the same repo, ship-when-done still commits (the commit is
 the anti-loss) but **holds the push** until merge-review has passed the current HEAD — the quality gate
 runs **before anything reaches the remote**. It surfaces `push-held:merge-review-pending` and continues
-your session to run `/merge-review`; once a pass is recorded, the push and the PR happen. Loose coupling
-via merge-review's `.git` state — absent, this is inert. (The only remote dependency in the
-ship-when-done → merge-review → mr-watchdog chain is mr-watchdog itself.)
+your session to run `/merge-review`; once the pass is recorded, the very next Stop pushes and opens the
+PR — no human prompt needed, and the review request fires at most once per work-state (capped per
+session), so the Stop hook can never loop. When it creates a branch or pushes, it hands engagement to
+the siblings explicitly (their session state is stamped), so a **single-shot delivery** — branch, work,
+done in one turn — is still reviewed and its CI still watched; right after the PR opens it relays
+mr-watchdog's watcher-launch nudge in the same turn. Loose coupling via the siblings' `.git` state —
+absent, all of this is inert. (The only remote dependency in the ship-when-done → merge-review →
+mr-watchdog chain is mr-watchdog itself.)
 
 ## Manual / debug
 
@@ -125,6 +132,7 @@ take over, so the PR/MR step never hard-depends on a forge CLI.
   self-report. Keep `require_green_gate_for_pr: true`.
 - **No model call**, by design. The optional `judge_command` is yours to wire (e.g. an API-keyed
   judge) and is off by default.
-- Runs at end-of-turn and can run the gate then; keep the gate fast or scope the opt-in to repos where
-  that is acceptable.
+- Runs at end-of-turn and can run the gate then (capped at 120s, timeout = not green). The verdict is
+  cached per work-state, so idle turns never re-run it — it runs again only when the tree or HEAD
+  actually changed.
 - Commits the full working tree (`git add -A`); start from a clean tree so milestones stay scoped.

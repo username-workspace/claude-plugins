@@ -311,18 +311,22 @@ def write_session(repo, data):
 
 
 def cmd_baseline(args):
-    """UserPromptSubmit: stamp the branch's pushed state at turn start, so a later push is detectable."""
+    """UserPromptSubmit: stamp the branch's pushed state at turn start, so a later push is detectable.
+    The session file doubles as the sibling coupling point — ship-when-done stamps engagement into it
+    when IT pushes the branch, and calls the script path recorded here to hand off the watcher launch —
+    so it is written for any branch of a repo with a remote, including the trunk."""
     repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
-    branch = feature_branch(repo, cfg)
-    if not branch:
+    if not cfg.get("enabled", True) or not current_branch(repo) or not remote_name(repo):
         return
     st = read_session(repo)
     if not st or st.get("session") != args.session:
         st = {"session": args.session, "branches": {}}
-    if branch not in st["branches"]:
+    st["script"] = os.path.abspath(__file__)
+    branch = feature_branch(repo, cfg)
+    if branch and branch not in st["branches"]:
         st["branches"][branch] = {"base": upstream_sha(repo), "engaged": False}
-        write_session(repo, st)
+    write_session(repo, st)
 
 
 def engaged(repo, cfg, session):

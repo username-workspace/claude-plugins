@@ -15,7 +15,7 @@ while IFS= read -r s; do
     cat "$LOG"
     fail=1
   fi
-done < <(find "$ROOT/plugins" -type f \( -name run.sh -o -name integration.sh \) -path '*/tests/*' | sort)
+done < <(find "$ROOT/plugins" "$ROOT/tests" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' | sort)
 rm -f "$LOG"
 [ "$found" -gt 0 ] || { echo "no test suites found"; exit 1; }
 echo

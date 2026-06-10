@@ -27,8 +27,6 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return
-    if payload.get("stop_hook_active"):
-        return
     cwd = payload.get("cwd") or os.getcwd()
     session = payload.get("session_id") or ""
     tp = payload.get("transcript_path")
@@ -67,7 +65,7 @@ def main():
     if todos_done:
         cmd.append("--todos-done")
     try:
-        subprocess.run(cmd, timeout=180)
+        subprocess.run(cmd, timeout=240)
     except Exception:
         pass
 
