@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """mr-watchdog — once a merge request is open, watch its CI in a background task the MAIN session owns,
-and when it resolves hand the verdict back to that session: green → 'CI green', red → the failing
+and when it resolves hand the verdict back to that session: green → 'ok, all good', red → the failing
 job log so the session fixes the ROOT cause (no bypass).
 
 The watcher (`run`) is a foreground poll loop the session launches with run_in_background; the harness
@@ -487,7 +487,7 @@ def launch_instruction(repo):
     return ("An open merge request for this branch has CI running. Launch the watcher in the BACKGROUND "
             "so you're told the moment it resolves — run this with run_in_background=true, then carry on "
             "(do NOT wait on it):\n  " + cmd + "\nWhen it exits, its result comes back to you: green → "
-            "report it to me; red → fix the ROOT cause from its log (no bypass), run "
+            "tell me 'ok, all good — CI green'; red → fix the ROOT cause from its log (no bypass), run "
             "verify, and push the fix.")
 
 
@@ -523,7 +523,7 @@ def cmd_run(args):
                   "(check gh/glab auth) — not a CI verdict")
             return
         if status == "success":
-            print(f"[mr-watchdog] CI green on '{branch}'")
+            print(f"[mr-watchdog] ok, all good — CI green on '{branch}'")
             return
         if status == "failed":
             log = failing_log(repo, forge, branch)

@@ -139,7 +139,7 @@ assert_contains 'green' "$out" "6. weakened/assert-True test flagged"
 # 7. run (the bg watcher): poll until the pipeline resolves, then exit with the verdict (read-only)
 d="$ROOT/run"; new_repo "$d"; before=$(count "$d" HEAD)
 out=$(STUB_CI=success python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
-assert_contains "CI green" "$out" "7. green → one-line confirmation"
+assert_contains "ok, all good" "$out" "7. green → the wake word"
 assert_eq 0 "$rc" "7. green → exit 0"
 out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_contains 'ROOT CAUSE' "$out" "7. red → hands the failure back to fix the root cause"

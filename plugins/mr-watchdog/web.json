@@ -1,12 +1,12 @@
 {
   "category": "DevOps",
   "tagline": "Open a merge request, then forget it — a background watcher follows its CI and hands the verdict back to your session.",
-  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog watches the MR's remote CI as a background task your main session owns. The watcher is launched with run_in_background and tracked by the harness, which re-invokes your session the moment the pipeline resolves — so the green confirmation or the failing job log reaches you IN the conversation, with no detached daemon, no status file, and no polling-by-hook. It is strictly read-only: it never commits, pushes, or merges. On red it hands back the failing log so your session fixes the ROOT cause (no bypass); a verify command self-checks that fix for fake-green before committing. A Stop hook nudges the session to launch the watcher (once per pipeline HEAD). Forge-agnostic (GitHub via gh, GitLab via glab). The CI-watch step after ship-when-done → merge-review — and the only remote dependency in that chain.",
+  "summary": "Triggered by an open merge request (not a manual command), mr-watchdog watches the MR's remote CI as a background task your main session owns. The watcher is launched with run_in_background and tracked by the harness, which re-invokes your session the moment the pipeline resolves — so 'ok, all good' (green) or the failing job log (red) reaches you IN the conversation, with no detached daemon, no status file, and no polling-by-hook. It is strictly read-only: it never commits, pushes, or merges. On red it hands back the failing log so your session fixes the ROOT cause (no bypass); a verify command self-checks that fix for fake-green before committing. A Stop hook nudges the session to launch the watcher (once per pipeline HEAD). Forge-agnostic (GitHub via gh, GitLab via glab). The CI-watch step after ship-when-done → merge-review — and the only remote dependency in that chain.",
   "capabilities": [
     "MR-triggered, not manual: a Stop hook nudges your session to launch the watcher when an open MR has live CI",
     "Background task the SESSION owns: launched via run_in_background, tracked by the harness, which re-invokes you when it resolves — the verdict lands in the conversation, not a status file",
     "Read-only watcher — it only polls CI and reads logs; never commits, pushes, or merges",
-    "On red: hands back the failing job log so your session fixes the ROOT cause (no bypass); on green: a one-line confirmation",
+    "On red: hands back the failing job log so your session fixes the ROOT cause (no bypass); on green: 'ok, all good'",
     "verify: a fake-green gate your session runs before committing — blocks deleted/weakened tests, --no-verify, || true, lowered thresholds. Self-engaging & session-scoped (only a branch THIS session pushed); opt out per repo; forge-agnostic (gh/glab)"
   ],
   "commands": ["watch"],
