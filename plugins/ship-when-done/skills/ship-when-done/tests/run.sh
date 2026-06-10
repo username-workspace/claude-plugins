@@ -418,6 +418,21 @@ out=$(python3 "$SHIP" engage --repo "$d" --goal "do x" 2>&1)
 assert_contains '"decision": "block"' "$out" "32c. push held → engage emits a block to run the review"
 assert_contains 'merge-review' "$out" "32c. the block tells the session to run merge-review"
 
+# 33. commit subject derived from the changed FILES, never from free prose (no ticket/marker)
+d="$ROOT/t33"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+mkdir -p "$d/plugins/foo"; echo x > "$d/plugins/foo/bar.py"
+python3 "$SHIP" engage --repo "$d" --goal "x" --last-message "this is my rambling prose that must not leak into the commit" >/dev/null 2>&1
+msg=$(git -C "$d" log -1 --pretty=%s)
+assert_absent 'rambling prose' "$msg" "33. commit subject does NOT contain free prose"
+assert_contains 'bar.py' "$msg" "33. commit subject derived from the changed file"
+assert_contains 'foo' "$msg" "33. scope derived from the directory (generic 'plugins' skipped)"
+case "$msg" in chore*|docs*|test*|"["*) ok "33. conventional-commit type prefix";; *) ko "33. conventional type — got [$msg]";; esac
+# docs type when all changed files are docs
+d="$ROOT/t33b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+mkdir -p "$d/docs"; echo '# x' > "$d/docs/guide.md"
+python3 "$SHIP" engage --repo "$d" --goal "x" --last-message "noise" >/dev/null 2>&1
+case "$(git -C "$d" log -1 --pretty=%s)" in docs*) ok "33b. all-docs change → docs: type";; *) ko "33b. docs type — got [$(git -C "$d" log -1 --pretty=%s)]";; esac
+
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
 

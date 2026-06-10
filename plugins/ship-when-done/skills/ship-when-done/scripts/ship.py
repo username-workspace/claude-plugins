@@ -223,14 +223,51 @@ def derive_branch_name(cfg, state):
     return f"swd/{slug}"
 
 
+def commit_scope(files):
+    """A readable conventional-commit scope from the changed files' common directory (skipping generic
+    container dirs like plugins/src/app), or None."""
+    dirs = [os.path.dirname(f) for f in files if os.path.dirname(f)]
+    if not dirs:
+        return None
+    try:
+        common = os.path.commonpath(dirs)
+    except ValueError:
+        return None
+    parts = [p for p in common.split(os.sep) if p and p != "."]
+    generic = {"plugins", "src", "app", "lib", "libs", "packages", "apps", "skills", "scripts", "components"}
+    meaningful = [p for p in parts if p not in generic]
+    return meaningful[0] if meaningful else (parts[-1] if parts else None)
+
+
+def summarize_changes(repo):
+    """A concise conventional-commit (type, scope, description) derived from the CHANGED FILES — used
+    when there is no done-marker summary, so the subject never falls back to free prose."""
+    _, porcelain, _ = run(["git", "status", "--porcelain", "-uall"], repo)
+    files = [l[3:].split(" -> ")[-1].strip().strip('"') for l in porcelain.splitlines() if l.strip()]
+    files = [f for f in files if f]
+    if not files:
+        return "chore", None, "work in progress"
+    low = [f.lower() for f in files]
+    ctype = ("docs" if all(f.endswith((".md", ".mdx", ".rst", ".txt")) for f in low)
+             else "test" if all(("test" in f or "spec" in f) for f in low)
+             else "chore")
+    names = list(dict.fromkeys(os.path.basename(f) for f in files))
+    desc = ("update " + ", ".join(names[:3])) if len(names) <= 3 else f"update {len(files)} files"
+    return ctype, commit_scope(files), desc[:72]
+
+
 def build_commit_message(cfg, state, verdict):
     ticket = find_ticket(cfg.get("goal", ""), cfg["ticket_pattern"]) or find_ticket(state["branch"], cfg["ticket_pattern"])
-    ctype = (verdict or {}).get("type") or "chore"
-    desc = ((verdict or {}).get("summary") or "work in progress").strip().rstrip(".")[:72]
+    v = verdict or {}
+    if v.get("source") == "marker" and (v.get("summary") or "").strip():
+        ctype, scope = v.get("type") or "chore", None
+        desc = v["summary"].strip().rstrip(".")[:72]
+    else:
+        ctype, scope, desc = summarize_changes(state["repo"])
+    head = f"{ctype}({scope}): {desc}" if scope else f"{ctype}: {desc}"
     if ticket and cfg["commit_convention"] == "ticket":
-        return f"[{ticket}] {ctype}: {desc}"
-    base = f"{ctype}: {desc}"
-    return f"{base}\n\nRefs: {ticket}" if ticket else base
+        return f"[{ticket}] {head}"
+    return f"{head}\n\nRefs: {ticket}" if ticket else head
 
 
 def review_gate_pending(repo):
