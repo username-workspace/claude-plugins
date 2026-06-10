@@ -65,16 +65,29 @@ For each new untracked file that is part of the work, include its full content a
 
 ---
 
-## 0b. Bootstrap — Remote Mode
+## 0b. Bootstrap — Remote Mode (the automatic, post-back contract)
 
-The preamble gives you the **exact `git diff <ref>...HEAD` command** (the target ref may NOT be the default branch — it can be a release/hotfix/stacked branch) and may inject the diff directly.
+A CI/bot **runner** drives this mode for an **automatic, non-interactive** review whose result it posts
+back to the MR (GitLab, GitHub, anywhere). Same round-trip shape as a zv-merge-review pod:
 
-**Do exactly this — no variation:**
-1. Use the **exact** diff from the preamble. Do NOT substitute the default branch for the target ref — diffing against the wrong base pulls in unrelated commits and corrupts the score.
-2. Do NOT run `git fetch`, `git checkout`, commit, push, or any git state mutation — the runner set up the tree.
-3. Do NOT apply fixes and do NOT post anything. Remote mode emits a verdict + machine-readable state; the runner decides what to publish.
+**The runner injects** (in the preamble):
+- the marker `**Execution mode: remote**`;
+- the **exact `git diff <targetRef>...HEAD` command** — the target ref may be a release/hotfix/stacked branch, **not** necessarily the default branch;
+- the working directory (already checked out at the source branch);
+- optionally: project coding standards, and the **prior pass's `merge-review-state` block** for iterative reconciliation (§2bis).
 
-Run `python3 "${SKILL}" context --repo . --mode remote` to confirm read-only, then proceed to section 0c.
+**You do** (strictly read-only):
+1. Run the **exact** diff from the preamble — never substitute the default branch (wrong base → corrupt score).
+2. No git mutation (`fetch`/`checkout`/`commit`/`push`), no fixes, no posting.
+3. Review across all scored dimensions; reconcile against the injected prior state if present.
+4. Emit the **review body** (the OUTPUT FORMAT below, as Markdown) **followed by** the `merge-review-state` block — and nothing else.
+
+**The runner consumes**: it posts the review body as an MR/PR comment, and parses the `merge-review-state`
+block (`score`, `verdict`, per-finding status) to gate the merge — approve at `score ≥ threshold`, request
+changes otherwise. The block is deterministic and line-parseable; **that is the machine contract** — so an
+agent can drive the whole loop (inject diff → get verdict → post comment → set approval) without a human.
+
+Confirm with `python3 "${SKILL}" context --repo . --mode remote`, then proceed to section 0c.
 
 ---
 
@@ -250,10 +263,14 @@ OR
 
 ### Machine-readable state  *(append verbatim; the next pass / runner parses this)*
 <!-- merge-review-state
-v=1 · pass=N · score=X
+v=1 · pass=N · score=X · verdict=approved|changes-requested
 finding: path#slug | dim=security|bug|integration|quality | status=open|resolved|withdrawn|reaffirmed | confidence=high|medium|low | class=attested|contestable
 -->
 ```
+
+The `verdict` field is the runner's gate: `approved` when `score ≥ threshold`, else `changes-requested`. A
+runner posts the body above and reads this line to set the MR's approval — the same block also feeds the
+next pass's reconciliation (§2bis), so an automatic loop converges exactly like the interactive one.
 
 In **remote mode**, stop at the output: emit the verdict + the `merge-review-state` block and nothing else. Do not apply fixes, commit, push, or post — the runner publishes.
 
