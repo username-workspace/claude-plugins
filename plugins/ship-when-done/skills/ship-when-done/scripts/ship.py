@@ -235,8 +235,9 @@ def build_commit_message(cfg, state, verdict):
 
 def review_gate_pending(repo):
     """True when a sibling merge-review gate is active for this repo (its session file is present) but
-    has not passed the current HEAD — so we hold the PR. Loose coupling via merge-review's .git state
-    files; if it isn't active here this is always False and ship behaves exactly as before."""
+    has not passed the current HEAD — so we hold the PUSH (the quality gate runs before anything reaches
+    the remote; the commit is the anti-loss). Loose coupling via merge-review's .git state files; if it
+    isn't active here this is always False and ship behaves exactly as before."""
     gd = git_dir(repo)
     if not os.path.isfile(os.path.join(gd, "merge-review-session.json")):
         return False
@@ -246,6 +247,16 @@ def review_gate_pending(repo):
         return True
     rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
     return not (st.get("passed") and st.get("head") == (head if rc == 0 else None))
+
+
+def review_block_reason():
+    return ("The work is committed (safe), and it's ready to ship — but the merge-review quality gate "
+            "has not passed for this HEAD, and nothing is pushed to the remote until it does. Run a "
+            "merge-readiness review now (the merge-review skill, LOCAL mode): score the diff, fix the "
+            "attested findings at the root cause (never fake green — no --no-verify, || true, "
+            "disabled/deleted/weakened tests, lowered thresholds), loop until it clears the threshold, "
+            "then record the pass. Once it passes I'll push and open the PR. If you cannot reach the "
+            "threshold without a workaround, STOP and explain instead.")
 
 
 def run_ladder(state, verdict, gate, cfg):
@@ -314,20 +325,23 @@ def run_ladder(state, verdict, gate, cfg):
     if remote and state["on_default"]:
         res["blocked"].append("refuse-push-default")
     elif remote and (just_committed or not has_up or unpushed > 0):
-        push = ["git", "push", "-u", remote, state["branch"]]
-        gitlab_push = want_pr and mode in ("draft-pr", "ready-pr") and strategy == "gitlab-push"
-        if gitlab_push:
-            title = ("Draft: " if mode == "draft-pr" else "") + " ".join(summary.split())[:72]
-            push += ["-o", "merge_request.create", "-o", f"merge_request.target={base}",
-                     "-o", f"merge_request.title={title}"]
-        rc, _, err = run(push, repo)
-        if rc == 0:
-            res["actions"].append("push")
-            if gitlab_push:
-                res["actions"].append("pr:gitlab-mr")
-                created = True
+        if review_pending:
+            res["blocked"].append("push-held:merge-review-pending")   # quality gate: nothing leaves before review
         else:
-            res["actions"].append(f"push-failed:{err[:60]}")
+            push = ["git", "push", "-u", remote, state["branch"]]
+            gitlab_push = want_pr and mode in ("draft-pr", "ready-pr") and strategy == "gitlab-push"
+            if gitlab_push:
+                title = ("Draft: " if mode == "draft-pr" else "") + " ".join(summary.split())[:72]
+                push += ["-o", "merge_request.create", "-o", f"merge_request.target={base}",
+                         "-o", f"merge_request.title={title}"]
+            rc, _, err = run(push, repo)
+            if rc == 0:
+                res["actions"].append("push")
+                if gitlab_push:
+                    res["actions"].append("pr:gitlab-mr")
+                    created = True
+            else:
+                res["actions"].append(f"push-failed:{err[:60]}")
 
     if want_pr and not created:
         if mode == "suggest":
@@ -368,8 +382,6 @@ def run_ladder(state, verdict, gate, cfg):
                 res["pr_url"] = pr_create_url(info, base, state["branch"])
     elif done and not gate_ok:
         res["blocked"].append("pr-withheld:gate-not-green")
-    elif done and review_pending:
-        res["blocked"].append("pr-withheld:merge-review-pending")
 
     if not res["actions"]:
         res["skipped"] = "nothing-to-do"
@@ -625,10 +637,11 @@ def cmd_engage(args):
     res = run_ladder(state, verdict, gate, cfg)
     if any(a.startswith("pr:draft") or a.startswith("pr:ready") or a == "pr:gitlab-mr" for a in res["actions"]):
         clear_marker(repo)
+    if "push-held:merge-review-pending" in res["blocked"]:
+        print(json.dumps({"decision": "block", "reason": review_block_reason()}))
+        return
     summary = " · ".join(res["actions"]) or res.get("skipped") or "no-op"
     line = f"[ship-when-done] {summary}" + (f"  (withheld: {', '.join(res['blocked'])})" if res["blocked"] else "")
-    if "pr-withheld:merge-review-pending" in res["blocked"]:
-        line += "\n  → run /merge-review to clear the gate; the PR opens once it passes"
     link = res.get("pr") or res.get("pr_url")
     if link:
         line += f"\n  → {link}"
