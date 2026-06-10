@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Stop-hook plumbing: surface the watchdog's latest result, then (idempotently) launch a watcher for
-the current branch's open MR. Opt-in and all guardrails live in watch.py."""
+"""Stop-hook plumbing: resolve the repo we're working in, then let watch.py decide whether to nudge this
+session to launch the background CI watcher (a `block` continuation). All policy lives in watch.py."""
 import json, os, subprocess, sys
 
 
@@ -27,22 +27,11 @@ def main():
     repo = resolve(script, payload.get("cwd") or "", payload.get("transcript_path") or "")
     if not repo:
         return
-    # only engage a branch THIS session pushed (its pipeline is ours) — not one we're merely visiting
     try:
-        r = subprocess.run([sys.executable, script, "engaged", "--repo", repo, "--session", session],
-                           timeout=20, capture_output=True, text=True)
-        if (r.stdout or "").strip() != "yes":
-            return
-    except Exception:
-        return
-    # (re)launch the background watcher — output suppressed so it can't corrupt the decision below
-    try:
-        subprocess.run([sys.executable, script, "start", "--repo", repo], timeout=30,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-    try:
-        subprocess.run([sys.executable, script, "hook", "--repo", repo], timeout=30)
+        r = subprocess.run([sys.executable, script, "hook", "--repo", repo, "--session", session],
+                           timeout=30, capture_output=True, text=True)
+        if r.stdout.strip():
+            sys.stdout.write(r.stdout)
     except Exception:
         pass
 

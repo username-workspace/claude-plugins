@@ -1,7 +1,7 @@
 {
   "name": "mr-watchdog",
-  "version": "1.3.0",
-  "description": "Triggered by an open merge request, a detached background watchdog monitors the MR's remote CI. It is strictly read-only — never commits, pushes, or merges. On a red pipeline it fetches the failing job log and, by default, continues your interactive session to fix the ROOT cause (no bypass) via the Stop-hook continuation; set on_red:notify to just surface it. A verify command lets that session self-check its fix for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds) before committing. Engages on its own only for a branch this session pushed (never a stale or someone else's MR); opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The sequel to ship-when-done.",
+  "version": "2.0.0",
+  "description": "Triggered by an open merge request, mr-watchdog watches the MR's remote CI as a background task your MAIN session owns: the watcher is launched with run_in_background and tracked by the harness, which re-invokes your session the moment the pipeline resolves — so the verdict reaches you IN the conversation (no detached daemon, no polling). Strictly read-only: never commits, pushes, or merges. Green → 'ok c'est bon'; red → it hands back the failing job log so your session fixes the ROOT cause (no bypass), with a verify command to self-check the fix for fake-green (deleted/weakened tests, --no-verify, || true, lowered thresholds). A Stop hook nudges the session to launch the watcher, once per pipeline HEAD. Engages only a branch THIS session pushed; opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab). The CI-watch step after ship-when-done → merge-review.",
   "author": {
     "name": "Username",
     "email": "admin@username.digital"
