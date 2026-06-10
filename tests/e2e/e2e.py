@@ -36,6 +36,34 @@ CI_PLANS = {"green": {"sleep": 0, "exit": 0}, "red-then-fixed": {"sleep": 0, "ex
             "slow-green": {"sleep": 60, "exit": 0}}
 
 
+# --- project archetypes: varied complexity, gate AUTO-DETECTED (no config) --------------------------
+
+def _files(repo, files):
+    for rel, content in files.items():
+        p = os.path.join(repo, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w").write(content)
+
+
+PROJECTS = {
+    "node": {"expected_gate": "npm test", "cwd": ".", "files": {
+        "package.json": '{"name":"e2e-node","scripts":{"test":"node -e \'process.exit(0)\'"}}\n'}},
+    "pnpm-ts": {"expected_gate": "pnpm ts:check", "cwd": ".", "files": {
+        "package.json": '{"name":"e2e-ts","scripts":{"ts:check":"node -e \'process.exit(0)\'"}}\n',
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n"}},
+    "php": {"expected_gate": "composer test", "cwd": ".", "files": {
+        "composer.json": '{"name":"e2e/php","scripts":{"test":"php -r \'exit(0);\'"}}\n'}},
+    "go": {"expected_gate": "go test ./...", "cwd": ".", "files": {
+        "go.mod": "module e2e/gomod\n\ngo 1.21\n",
+        "main.go": "package main\n\nfunc main() {}\n"}},
+    "multi": {"expected_gate": "make test", "cwd": "packages/lib", "files": {
+        "Makefile": "test:\n\t@true\n",
+        "src/app/main.txt": "app\n",
+        "packages/lib/lib.txt": "lib\n",
+        "docs/README.md": "# multi\n"}},
+}
+
+
 def sh(cmd, cwd=None, timeout=300, env=None, check=False):
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
                        env=dict(os.environ, **(env or {})), shell=isinstance(cmd, str))
@@ -80,7 +108,7 @@ def gate_config(repo, gate):
     cfg = {"green": {"gate": "true"},
            "red-then-fixed": {"gate": f"test -f {repo}/.git/gate-healed"},
            "timeout": {"gate": "sleep 5", "gate_timeout": 2},
-           "none": {}}[gate]
+           "none": {}, "auto": {}}[gate]
     if cfg:
         json.dump(cfg, open(os.path.join(repo, ".git", "ship-when-done.json"), "w"))
 
@@ -119,8 +147,12 @@ def watch_until_resolved(repo, timeout=420):
 
 
 def pr_state(branch):
-    rc, out, _ = sh(["gh", "pr", "view", branch, "--repo", E2E_REPO, "--json", "state,isDraft,number"])
-    return json.loads(out) if rc == 0 and out else None
+    """The OPEN PR for this exact head branch, else None — `gh pr view <branch>` also matches closed
+    PRs from previous runs, which is a different question and broke cross-run isolation."""
+    rc, out, _ = sh(["gh", "pr", "list", "--repo", E2E_REPO, "--head", branch, "--state", "open",
+                     "--json", "state,isDraft,number"])
+    prs = json.loads(out) if rc == 0 and out else []
+    return prs[0] if prs else None
 
 
 # --- the scenario executor ---------------------------------------------------------------------------
@@ -128,16 +160,22 @@ def pr_state(branch):
 def run_scenario(sc, tag):
     workdir = os.path.join(tempfile.mkdtemp(prefix="harness-e2e-"), "repo")
     clone(workdir)
-    branch = f"e2e/{tag}-{sc['flow']}-{sc['gate']}-{sc['ci']}"
+    project = PROJECTS.get(sc.get("project", "bare"))
+    branch = f"e2e/{tag}-{sc.get('project', 'bare')}-{sc['flow']}-{sc['gate']}-{sc['ci']}"
     session = f"e2e-{tag}"
     sh(["git", "-C", workdir, "checkout", "-q", "-b", branch], check=True)
+    if project:
+        _files(workdir, project["files"])
+        sh(["git", "-C", workdir, "add", "-A"], check=True)
+        sh(["git", "-C", workdir, "commit", "-qm", "chore: project scaffold"], check=True)
+    cwd = os.path.join(workdir, project["cwd"]) if project else workdir
     gate_config(workdir, sc["gate"])
     tp = transcript_for(workdir, f"E2E-1 {sc['flow']} delivery on {branch}")
     baselines(workdir, session)
 
     if sc["flow"] == "multi-turn":
         work(workdir, "part1", sc["ci"])
-        out = stop(workdir, session, tp)
+        out = stop(cwd, session, tp)
         expect("push" in out or "commit" in out, "multi-turn turn1: partial work must commit+push", out)
         expect(pr_state(branch) is None, "multi-turn turn1: no PR before done", out)
         baselines(workdir, session)
@@ -149,7 +187,7 @@ def run_scenario(sc, tag):
     sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary",
         f"e2e {sc['flow']}", "--type", "feat"], check=True)
 
-    out = stop(workdir, session, tp)
+    out = stop(cwd, session, tp)
     if sc["gate"] == "timeout":
         expect("gate-timeout" in out, "timeout gate: distinct withheld reason expected", out)
         ev = json.load(open(os.path.join(workdir, ".git", "swd-gate.json")))
@@ -163,13 +201,13 @@ def run_scenario(sc, tag):
     if sc["gate"] == "red-then-fixed":
         expect("gate-not-green" in out, "red gate: PR withheld visibly", out)
         open(os.path.join(workdir, ".git", "gate-healed"), "w").write("x")
-        out = stop(workdir, session, tp, active=True)
+        out = stop(cwd, session, tp, active=True)
 
     expect('"decision": "block"' in out and "merge-review" in out,
            "done work must be held for the merge-review pass", out)
     expect(pr_state(branch) is None, "nothing on the forge before the review", out)
     sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
-    out = stop(workdir, session, tp, active=True)
+    out = stop(cwd, session, tp, active=True)
     pr = pr_state(branch)
     expect(pr is not None and pr["state"] == "OPEN" and pr["isDraft"],
            "reviewed work must reach the forge as a draft PR", out)
@@ -184,6 +222,10 @@ def run_scenario(sc, tag):
         sh(["git", "-C", workdir, "push", "-q", "origin", branch], check=True)
         rc, verdict = watch_until_resolved(workdir)
     expect(rc == 0 and "CI au vert" in verdict, "the pipeline must end green", verdict)
+    if sc["gate"] == "auto":
+        ev = json.load(open(os.path.join(workdir, ".git", "swd-gate.json")))
+        expect(ev.get("cmd") == project["expected_gate"] and ev.get("verdict") == "pass",
+               f"auto-detected gate must be '{project['expected_gate']}' and green", json.dumps(ev))
 
     sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
     shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
@@ -211,7 +253,9 @@ def file_issue(sc, tag, err):
     body = (f"The E2E lane failed twice on the same generated scenario.\n\n"
             f"**Scenario**: `{json.dumps(sc)}`  ·  **tag**: `{tag}`\n"
             f"**Reproduce**: `python3 tests/e2e/e2e.py --scenario "
-            f"{sc['flow']}:{sc['gate']}:{sc['ci']}`\n\n```\n{str(err)[-4000:]}\n```")
+            f"{sc['flow']}:{sc['gate']}:{sc['ci']}"
+            + (f":{sc['project']}" if sc.get("project") else "")
+            + f"`\n\n```\n{str(err)[-4000:]}\n```")
     rc, _, _ = sh(["gh", "issue", "create", "--repo", ISSUE_REPO, "--title", title, "--body", body,
                    "--label", "e2e"])
     if rc != 0:
@@ -223,22 +267,30 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--count", type=int, default=2)
     ap.add_argument("--repo", default=E2E_REPO)
-    ap.add_argument("--scenario", help="one-off flow:gate:ci instead of the generated set")
+    ap.add_argument("--scenario", help="one-off flow:gate:ci[:project] instead of the generated set")
+    ap.add_argument("--projects", action="store_true",
+                    help="full-integration suite over the project archetypes (auto-detected gates)")
     args = ap.parse_args()
     globals()["E2E_REPO"] = args.repo
 
     if args.scenario:
-        f, g, c = args.scenario.split(":")
-        scenarios = [{"flow": f, "gate": g, "ci": c}]
+        parts = args.scenario.split(":")
+        scenarios = [{"flow": parts[0], "gate": parts[1], "ci": parts[2],
+                      **({"project": parts[3]} if len(parts) > 3 else {})}]
+    elif args.projects:
+        scenarios = [{"flow": "single-shot", "gate": "auto",
+                      "ci": "red-then-fixed" if p == "multi" else "green", "project": p}
+                     for p in PROJECTS]
     else:
         scenarios = generate(args.seed, args.count)
 
-    print(f"harness-e2e · forge={E2E_REPO} · seed={args.seed} · {len(scenarios)} scenario(s)")
+    runid = format(int(time.time()) % 36 ** 4, "x")
+    print(f"harness-e2e · forge={E2E_REPO} · seed={args.seed} · run={runid} · {len(scenarios)} scenario(s)")
     gc_sandbox()
     failures = 0
     for i, sc in enumerate(scenarios):
-        tag = f"s{args.seed}n{i}"
-        label = f"{sc['flow']}/{sc['gate']}/{sc['ci']}"
+        tag = f"s{args.seed}n{i}r{runid}"
+        label = f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}"
         t0 = time.time()
         for attempt in (1, 2):
             try:
