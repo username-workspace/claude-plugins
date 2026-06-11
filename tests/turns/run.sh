@@ -42,7 +42,8 @@ new_repo(){ # $1=dir  [$2=--remote]
   printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
 }
 
-# the three turn events, exactly as the harness delivers them
+# the three turn events as the harness delivers them (minus transcript_path — every lane here is
+# transcript-independent; the transcript lane is covered by tests/harness and integration.sh)
 prompt(){   printf '{"session_id":"%s","cwd":"%s","prompt":"x"}' "$1" "$2" \
   | env -u SHIP_WHEN_DONE_EVAL CLAUDE_PLUGIN_ROOT="$SWD" python3 "$SWD/hooks/prompt-hook.py"; }
 posttool(){ printf '{"session_id":"%s","tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1" "$2" \
