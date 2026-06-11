@@ -162,8 +162,10 @@ def last_edited_file(tp):
 
 
 def resolve_repo(cwd, transcript, command):
-    """The git repo root we're actually working in: the one named in a push command, else the cwd's
-    repo, else the repo of the most-recently edited file. None when no git repo is in scope."""
+    """The git repo root we're actually working in: the one named in a push command; else, in a
+    submodule workspace (cwd repo has .gitmodules), the repo of the most-recently edited file when it
+    is nested inside the cwd's — acting on the superproject would only bump a pointer; else the cwd's
+    repo, else the edited file's. None when no git repo is in scope."""
     if command:
         p = repo_from_command(command)
         if p:
@@ -172,10 +174,15 @@ def resolve_repo(cwd, transcript, command):
             r = git_toplevel(p)
             if r:
                 return r
-    if cwd:
-        r = git_toplevel(cwd)
-        if r:
-            return r
+    cwd_repo = git_toplevel(cwd) if cwd else None
+    if cwd_repo and transcript and os.path.isfile(os.path.join(cwd_repo, ".gitmodules")):
+        f = last_edited_file(transcript)
+        if f:
+            edited = git_toplevel(os.path.dirname(f))
+            if edited and edited != cwd_repo and edited.startswith(cwd_repo + os.sep):
+                return edited
+    if cwd_repo:
+        return cwd_repo
     if transcript:
         f = last_edited_file(transcript)
         if f:

@@ -391,6 +391,21 @@ assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "git -C $rr push origin f
 assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "cd $rr && git push")" "31. resolve: cd X && git push → X root"
 tpr="$ROOT/t31.jsonl"; printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s/app.txt"}}]}}\n' "$sub" > "$tpr"
 assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$nr" --transcript "$tpr")" "31. resolve: transcript last-edit → its repo root"
+
+# 31b. submodule workspace: cwd at the superproject root, edits in a submodule → the SUBMODULE wins
+# (committing from the superproject would only bump a pointer — the exact Z&V-workspace hazard)
+sup="$ROOT/r31b"; mkdir -p "$sup"; git -C "$sup" init -q -b main
+git -C "$sup" config user.email t@t.t; git -C "$sup" config user.name t; git -C "$sup" config commit.gpgsign false
+printf '[submodule "lib"]\n\tpath = lib\n' > "$sup/.gitmodules"
+mkdir -p "$sup/lib"; git -C "$sup/lib" init -q -b main
+subtop="$(git -C "$sup/lib" rev-parse --show-toplevel)"
+tps="$ROOT/t31b.jsonl"
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/inner.txt"}}]}}\n' "$subtop" > "$tps"
+assert_eq "$subtop" "$(python3 "$SHIP" resolve --cwd "$sup" --transcript "$tps")" "31b. submodule edit from superproject cwd → submodule root"
+suptop="$(git -C "$sup" rev-parse --show-toplevel)"
+tpo="$ROOT/t31b-out.jsonl"
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/outside.txt"}}]}}\n' "$ROOT" > "$tpo"
+assert_eq "$suptop" "$(python3 "$SHIP" resolve --cwd "$sup" --transcript "$tpo")" "31b. edits OUTSIDE the superproject never steal the anchor"
 python3 "$SHIP" baseline --repo "$sub" --session s1
 [ -f "$rtop/.git/swd-session.json" ] && ok "31. root-anchor: baseline from subdir → state at repo root" || ko "31. root-anchor subdir"
 
