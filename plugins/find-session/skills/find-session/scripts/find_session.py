@@ -37,8 +37,12 @@ def all_dirs():
     return sorted(d for d in PROJECTS.iterdir() if d.is_dir())
 
 
+SCAN_STATS = {"files_seen": 0, "files_counted": 0}  # observable: counted == survivors of the pre-gate
+
+
 def scan(dirs, regexes, since):
     results = []
+    SCAN_STATS["files_seen"] = SCAN_STATS["files_counted"] = 0
     for d in dirs:
         for f in d.glob("*.jsonl"):
             try:
@@ -48,19 +52,26 @@ def scan(dirs, regexes, since):
             day = mtime.strftime("%Y-%m-%d")
             if since and day < since:
                 continue
+            SCAN_STATS["files_seen"] += 1
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            # cross-match pre-gate: a file missing ANY concept can't win — reject it with one search per
+            # concept over the whole text, instead of len(lines) × len(concepts) line-by-line searches.
+            # The majority of files fail here; only survivors pay for per-line counting below.
+            if any(not rx.search(text) for rx in regexes):
+                continue
+            SCAN_STATS["files_counted"] += 1
             hits = [0] * len(regexes)
             tickets = Counter()
             lines = 0
-            try:
-                with f.open(encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        lines += 1
-                        for i, rx in enumerate(regexes):
-                            if rx.search(line):
-                                hits[i] += 1
-                        tickets.update(TICKET_RE.findall(line))
-            except OSError:
-                continue
+            for line in text.splitlines():
+                lines += 1
+                for i, rx in enumerate(regexes):
+                    if rx.search(line):
+                        hits[i] += 1
+                tickets.update(TICKET_RE.findall(line))
             if not lines or any(h == 0 for h in hits):
                 continue
             total = sum(hits)

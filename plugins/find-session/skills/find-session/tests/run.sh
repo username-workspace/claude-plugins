@@ -188,6 +188,23 @@ out=$(fs stripe webhook)
 assert_contains 'resume:  claude --resume local-one' "$out" "18. same-project match keeps the bare resume (no cd)"
 rm -rf "$PROJECTS"
 
+# 19. perf: the cross-match pre-gate detail-counts only the survivors, not every file scanned
+d="$ROOT/work/t19"; mkdir -p "$d"; cd "$d"; HERE="$PROJECTS/$(slug_of)"
+for i in $(seq 1 30); do jsonl "$HERE" "noise$i" "totally unrelated chatter line" "more noise"; done
+jsonl "$HERE" winner "kubernetes deployment saga" "kubernetes deployment saga"
+stats=$(env CLAUDE_PROJECTS_DIR="$PROJECTS" python3 - "$FS" <<'PY'
+import importlib.util as u, sys
+sp = u.spec_from_file_location("fs", sys.argv[1]); m = u.module_from_spec(sp); sp.loader.exec_module(m)
+import re
+from pathlib import Path
+dirs = m.all_dirs()
+m.scan(dirs, [re.compile("kubernetes", re.I), re.compile("deployment", re.I)], "")
+print(m.SCAN_STATS["files_seen"], m.SCAN_STATS["files_counted"])
+PY
+)
+assert_eq "31 1" "$stats" "19. pre-gate: 31 files seen, only the 1 cross-match survivor detail-counted"
+rm -rf "$PROJECTS"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"
