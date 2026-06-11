@@ -5,9 +5,10 @@ description: >-
   figures. Parses local session transcripts (~/.claude/projects) into cost, tokens, sessions, model
   mix, tool distribution, cache efficiency, thinking and subagent rates, per-project and per-week
   breakdowns — then renders an interactive HTML dashboard with a percentile placement (where you sit
-  in the population of Claude Code developers). Cost reconciles to within ~1% of ccusage. No network,
-  no account access. Use when asked to evaluate Claude Code usage, estimate spend, benchmark against
-  other developers, or prepare usage/percentile figures.
+  in the population of Claude Code developers). Cost is computed from a maintained price table and the
+  report flags any tokens billed at a fallback rate (unrecognized model family), so accuracy is
+  auditable rather than assumed. No network, no account access. Use when asked to evaluate Claude Code
+  usage, estimate spend, benchmark against other developers, or prepare usage/percentile figures.
 ---
 
 # Claude Code — Usage Diagnosis
@@ -26,8 +27,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/coding-agent-usage/scripts/collect-usage.p
 `/projects`). One pass over every `*.jsonl`, no network. Token/cost are **deduplicated by
 `message.id`** (Claude Code writes one transcript line per content block, each replaying the same
 `usage`) and replayed lines are dropped by `uuid`; tool calls are counted per `tool_use` block. Cost
-is computed locally from token counts at Anthropic list prices (see `assets/benchmarks.json`) and
-lands within ~1% of `ccusage` for Claude usage.
+is computed locally from token counts at Anthropic list prices (see `assets/benchmarks.json`). The
+`metadata.fallback_priced_token_share` field reports the % of tokens billed at the default rate
+because their model family wasn't recognized — a non-zero value (e.g. after a new model launch) is the
+signal to refresh the price table, so the cost is auditable rather than assumed accurate.
 
 ### 2. Build HTML
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/coding-agent-usage/assets/report-template.html`

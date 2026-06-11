@@ -190,6 +190,17 @@ assert_eq "1.2.3" "$(get "$ROOT/c1.json" "d['versions'][0]['version']")"        
 assert_eq "2"     "$(get "$ROOT/c1.json" "d['metadata']['active_days']")"       "C1. 2 active days"
 assert_eq "2"     "$(get "$ROOT/c1.json" "d['metadata']['span_days']")"         "C1. span = 2 days"
 
+# C1b. accuracy is auditable: tokens billed at the fallback rate (unrecognized model family) are
+# surfaced as a share, so a new/unknown model silently priced as the default never hides
+PLACEHOLDER
+P="$ROOT/c1b"; mkdir -p "$P"
+cat > "$P/sess.jsonl" <<EOF
+{"type":"assistant","uuid":"k1","sessionId":"s1","cwd":"$HOME/x","timestamp":"2026-06-01T10:00:00Z","message":{"id":"k1","model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":0},"content":[]}}
+{"type":"assistant","uuid":"u1","sessionId":"s1","cwd":"$HOME/x","timestamp":"2026-06-01T10:01:00Z","message":{"id":"u1","model":"some-future-model-x9","usage":{"input_tokens":3000,"output_tokens":0},"content":[]}}
+EOF
+usage "$P" > "$ROOT/c1b.json"
+assert_eq "75.0" "$(get "$ROOT/c1b.json" "d['metadata']['fallback_priced_token_share']")" "C1b. unknown model → 3000/4000 = 75% flagged as fallback-priced"
+
 # C2. empty input → zeroed totals, no crash, no div-by-zero
 P="$ROOT/c2"; mkdir -p "$P"; : > "$P/empty.jsonl"
 usage "$P" > "$ROOT/c2.json"

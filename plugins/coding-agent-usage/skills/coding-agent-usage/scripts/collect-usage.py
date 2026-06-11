@@ -115,6 +115,7 @@ def main():
 
     tok = Counter()
     total_cost = 0.0
+    fallback_tok = 0           # tokens billed at the fallback rate (model family not recognized)
     assistant_turns = thinking_turns = sidechain_turns = 0
     tool_calls = web_tool_calls = 0
     user_prompts = 0
@@ -202,6 +203,8 @@ def main():
                 tok["cache_read"] += read
                 tok["cache_creation"] += cw
                 mtotal = inp + out + read + cw
+                if family(model) == "default":
+                    fallback_tok += mtotal
 
                 bm = by_model[model]
                 bm["turns"] += 1
@@ -250,6 +253,7 @@ def main():
                     w["sessions"].add(sid)
 
     tok["total"] = tok["input"] + tok["output"] + tok["cache_read"] + tok["cache_creation"]
+    billed_tok = tok["total"]
     thinking_turns = len(thinking_ids)
     n_sessions = len(sessions)
     n_active = len(active_days)
@@ -332,6 +336,7 @@ def main():
             "benchmark_source_url": bench.get("source_url"),
             "benchmark_source_origin": bench.get("source_origin"),
             "benchmark_retrieved": bench["retrieved"],
+            "fallback_priced_token_share": round(100 * fallback_tok / billed_tok, 1) if billed_tok else 0,
         },
         "totals": {
             "cost": round(total_cost, 2),

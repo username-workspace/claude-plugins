@@ -33,15 +33,15 @@
     },
     {
       "name": "coding-agent-usage",
-      "version": "1.1.5",
+      "version": "1.2.0",
       "source": "./plugins/coding-agent-usage",
-      "description": "Diagnose your own Claude Code usage and benchmark it against Anthropic's published per-developer figures — an interactive HTML dashboard of cost, tokens, model mix, tool use, cache efficiency, per-project breakdown and a log-scale percentile gauge. Live, 24h-cached benchmark; multi-provider view (Claude + Codex + Gemini via ccusage). Cost reconciles within ~1% of ccusage.",
+      "description": "Diagnose your own Claude Code usage and benchmark it against Anthropic's published per-developer figures. Parses local transcripts into cost, tokens, sessions, model mix, tool distribution, cache efficiency, thinking and subagent rates, per-project and per-week breakdowns, and renders an interactive HTML dashboard with a log-scale percentile gauge. Benchmark figures are fetched live and cached 24h. Includes a multi-provider view (Claude + Codex + Gemini via ccusage). Cost is computed from a maintained price table and the report flags any tokens billed at a fallback rate (unrecognized model family), so accuracy is auditable rather than assumed. No account access.",
       "category": "development",
       "homepage": "https://github.com/username-workspace/skills/tree/main/plugins/coding-agent-usage"
     },
     {
       "name": "find-session",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "source": "./plugins/find-session",
       "description": "Find and resume a past Claude Code session from a search term — decomposes the query, cross-matches local transcripts, and returns the best session ID with a ready claude --resume command. Project-aware, macOS and Linux.",
       "category": "development",

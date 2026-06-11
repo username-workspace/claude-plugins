@@ -9,15 +9,75 @@
     "proven": "2026-06-11",
     "secs": 82
   },
+  "bare/multi-turn/green/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 107
+  },
+  "bare/multi-turn/none/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 4
+  },
+  "bare/multi-turn/none/red-then-fixed": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 4
+  },
+  "bare/multi-turn/none/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 4
+  },
+  "bare/multi-turn/red-then-fixed/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 44
+  },
+  "bare/multi-turn/red-then-fixed/red-then-fixed": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 82
+  },
   "bare/multi-turn/red-then-fixed/slow-green": {
     "run": "b4bb5",
     "proven": "2026-06-11",
     "secs": 108
   },
+  "bare/multi-turn/timeout/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 8
+  },
+  "bare/multi-turn/timeout/red-then-fixed": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 8
+  },
+  "bare/multi-turn/timeout/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 8
+  },
+  "bare/reedit/green/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 44
+  },
   "bare/reedit/green/red-then-fixed": {
     "run": "b485d",
     "proven": "2026-06-11",
     "secs": 82
+  },
+  "bare/reedit/green/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 106
+  },
+  "bare/reedit/none/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 3
   },
   "bare/reedit/none/red-then-fixed": {
     "run": "bb23f",
@@ -28,6 +88,26 @@
     "run": "b4cc7",
     "proven": "2026-06-11",
     "secs": 3
+  },
+  "bare/reedit/red-then-fixed/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 44
+  },
+  "bare/reedit/red-then-fixed/red-then-fixed": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 80
+  },
+  "bare/reedit/red-then-fixed/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 106
+  },
+  "bare/reedit/timeout/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 5
   },
   "bare/reedit/timeout/red-then-fixed": {
     "run": "b4bb5",
@@ -49,15 +129,40 @@
     "proven": "2026-06-11",
     "secs": 83
   },
+  "bare/single-shot/green/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 106
+  },
+  "bare/single-shot/none/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 3
+  },
   "bare/single-shot/none/red-then-fixed": {
     "run": "b3f4e",
     "proven": "2026-06-11",
     "secs": 3
   },
+  "bare/single-shot/none/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 3
+  },
+  "bare/single-shot/red-then-fixed/green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 44
+  },
   "bare/single-shot/red-then-fixed/red-then-fixed": {
     "run": "b4cc7",
     "proven": "2026-06-11",
     "secs": 113
+  },
+  "bare/single-shot/red-then-fixed/slow-green": {
+    "run": "bea0b",
+    "proven": "2026-06-11",
+    "secs": 106
   },
   "bare/single-shot/timeout/green": {
     "run": "bb23f",
@@ -66,6 +171,11 @@
   },
   "bare/single-shot/timeout/red-then-fixed": {
     "run": "bb2c5",
+    "proven": "2026-06-11",
+    "secs": 5
+  },
+  "bare/single-shot/timeout/slow-green": {
+    "run": "bea0b",
     "proven": "2026-06-11",
     "secs": 5
   },
