@@ -85,7 +85,20 @@ assert_eq "1"    "$(printf '%s' "$J" | get "$BO['fix_commits']")"       "4. Bob 
 assert_eq "1"    "$(printf '%s' "$J" | get "$BO['big_commits']")"       "4. Bob 1 big commit (>500)"
 assert_eq "0"    "$(printf '%s' "$J" | get "$BO['tiny_commits']")"      "4. Bob revert is 5 lines → NOT tiny (<5 strict)"
 assert_eq "50.0" "$(printf '%s' "$J" | get "$BO['fix_ratio_pct']")"     "4. Bob fix-ratio 1/2"
-assert_eq "2"    "$(printf '%s' "$J" | get "$BO['tickets']")"           "4. Bob touches ZV-1 (revert) + ZV-2"
+assert_eq "1"    "$(printf '%s' "$J" | get "$BO['tickets']")"           "4. revert does not credit ZV-1 — Bob delivers only ZV-2"
+assert_eq "1"    "$(printf '%s' "$J" | get "$BO['tickets_touched_total']")" "4. the reverted ticket is not 'touched' delivery either"
+# team total is the UNION of delivered tickets, not the sum of per-dev sets (no double-count)
+assert_eq "2"    "$(printf '%s' "$J" | get "o['metadata']['team_tickets_delivered']")" "4. team delivered = {ZV-1 Alice, ZV-2 Bob} = 2"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4c. a ticket two devs both commit on counts ONCE team-wide (sum would double it)
+d="$ROOT/shared"; git_init "$d"
+commit_as "$d" Alice a@a.a 2026-01-05 "ZV-9 part one" "$(seq 1 6)"
+commit_as "$d" Bob   b@b.b 2026-01-06 "ZV-9 part two" "$(seq 1 6)"
+J="$(collect "$d" 2026-01-01 2026-01-31 3m)"
+assert_eq "1" "$(printf '%s' "$J" | get "o['developers']['Alice']['tickets']")" "4c. Alice delivers ZV-9"
+assert_eq "1" "$(printf '%s' "$J" | get "o['developers']['Bob']['tickets']")"   "4c. Bob also commits ZV-9"
+assert_eq "1" "$(printf '%s' "$J" | get "o['metadata']['team_tickets_delivered']")" "4c. team total = 1 (union), not 2 (sum)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. merge commits are excluded (--no-merges)

@@ -6,6 +6,7 @@ feature branch; never merge; refuse to act on a detached/unborn HEAD or mid reba
 attribution in commits.
 """
 import argparse, json, os, re, subprocess, sys, time
+from datetime import datetime, timezone
 from shutil import which
 from urllib.parse import quote
 
@@ -601,8 +602,10 @@ def last_edited_file(tp):
 
 
 def resolve_repo(cwd, transcript, command):
-    """The git repo root we're actually working in: the one named in a push command, else the cwd's
-    repo, else the repo of the most-recently edited file. None when no git repo is in scope."""
+    """The git repo root we're actually working in: the one named in a push command; else, in a
+    submodule workspace (cwd repo has .gitmodules), the repo of the most-recently edited file when it
+    is nested inside the cwd's — acting on the superproject would only bump a pointer; else the cwd's
+    repo, else the edited file's. None when no git repo is in scope."""
     if command:
         p = repo_from_command(command)
         if p:
@@ -611,10 +614,15 @@ def resolve_repo(cwd, transcript, command):
             r = git_toplevel(p)
             if r:
                 return r
-    if cwd:
-        r = git_toplevel(cwd)
-        if r:
-            return r
+    cwd_repo = git_toplevel(cwd) if cwd else None
+    if cwd_repo and transcript and os.path.isfile(os.path.join(cwd_repo, ".gitmodules")):
+        f = last_edited_file(transcript)
+        if f:
+            edited = git_toplevel(os.path.dirname(f))
+            if edited and edited != cwd_repo and edited.startswith(cwd_repo + os.sep):
+                return edited
+    if cwd_repo:
+        return cwd_repo
     if transcript:
         f = last_edited_file(transcript)
         if f:
@@ -664,18 +672,22 @@ def write_session(repo, data):
 
 
 def cmd_baseline(args):
-    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows."""
+    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows.
+    Also stamps when the session first touched the repo (`started`) — the anchor that tells commits this
+    session authored from work that was already here when we arrived."""
     repo = os.path.abspath(args.repo)
     branch = cur_branch(repo)
     if not branch:
         return
+    now = datetime.now(timezone.utc).isoformat()
     st = read_session(repo)
     if not st or st.get("session") != args.session:
-        st = {"session": args.session, "branches": {}}
+        st = {"session": args.session, "started": now, "branches": {}}
+    st.setdefault("started", now)
     if branch not in st["branches"]:
         head, dirty = work_state(repo)
         st["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
-        write_session(repo, st)
+    write_session(repo, st)
 
 
 def engaged(repo, cfg, session):
@@ -699,6 +711,16 @@ def engaged(repo, cfg, session):
         entry["engaged"] = True
         write_session(repo, st)
         return True
+    # single-turn delivery: a branch baselined only after its work is committed never shows a delta,
+    # but if its commits ahead of base were authored after the session started, they are ours
+    started = st.get("started")
+    if started:
+        base, _ = default_branch(repo, remote_name(repo))
+        rc, n, _ = run(["git", "rev-list", "--count", f"{base}..HEAD", f"--since={started}"], repo)
+        if rc == 0 and n.isdigit() and int(n) > 0:
+            entry["engaged"] = True
+            write_session(repo, st)
+            return True
     return False
 
 

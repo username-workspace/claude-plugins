@@ -339,6 +339,27 @@ assert_contains '"node_modules"' "$out" "E11. SUBDIR scan skips node_modules (ro
 assert_contains '".env.local"' "$out" "E11. SUBDIR scan skips .env.local"
 assert_absent 'apps/api/apps' "$out" "E11. no doubled apps/api/apps path"
 
+# E12. a secret in a test fixture IS reported by default — test dirs are noise for deps/IaC, but a
+# leaked key under tests/ is a real leaked key. A skip-dirs-aware stub: it withholds the secret when
+# the tests glob is skipped (pass 1) and yields it when it isn't (the secret-only rescue pass).
+mkdir -p "$ROOT/sbin"
+cat > "$ROOT/sbin/trivy" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "Version: 0.50.0"; exit 0; fi
+case " $* " in *" --download-db-only "*) exit 0;; esac
+case " $* " in
+  *"--skip-dirs **/tests/**"*) echo '{"Results":[]}';;            # test dir skipped → secret hidden
+  *) echo '{"Results":[{"Target":"tests/fixtures/leak.env","Class":"secret","Secrets":[{"Severity":"CRITICAL","RuleID":"aws-access-key-id","Title":"AWS Access Key","StartLine":1}]}]}';;
+esac
+exit 0
+STUB
+chmod +x "$ROOT/sbin/trivy"
+mkdir -p "$ROOT/withtests/tests/fixtures"
+out=$(env PATH="$ROOT/sbin:$ROOT/realbin" "$PY" "$AUDIT" --no-version-check "$ROOT/withtests" 2>&1)
+assert_contains 'aws-access-key-id' "$out" "E12. a leaked key under tests/ is reported by default (secret rescue pass)"
+out=$(env PATH="$ROOT/sbin:$ROOT/realbin" "$PY" "$AUDIT" --no-version-check --scanners vuln,misconfig "$ROOT/withtests" 2>&1)
+assert_absent 'aws-access-key-id' "$out" "E12. no rescue pass when the secret scanner is not requested"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"

@@ -146,7 +146,8 @@ const singleWeek = weekLabels.length <= 1;
 document.getElementById('subtitle').textContent =
   `${weekLabels[0]} → ${weekLabels[weekLabels.length-1]} (${D.metadata.weeks} wk) · ${D.metadata.repos.length} repo(s) · available days = ${AVAIL ? 'weekdays − holidays − leaves' : 'weekdays (no leave data)'}`;
 
-const totalTickets = devs.reduce((s, n) => s + (D.developers[n].tickets || 0), 0);
+const totalTickets = D.metadata.team_tickets_delivered ??
+  devs.reduce((s, n) => s + (D.developers[n].tickets || 0), 0);
 const totalCommits = devs.reduce((s, n) => s + (D.developers[n].commits_main || D.developers[n].commits || 0), 0);
 const topVel = devs.slice().sort((a,b) => (D.developers[b].velocity_tickets_per_workday||0) - (D.developers[a].velocity_tickets_per_workday||0))[0];
 const lowestFix = devs.slice().filter(n => (D.developers[n].commits_main||D.developers[n].commits||0) >= 30)

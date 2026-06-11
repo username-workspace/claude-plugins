@@ -171,6 +171,22 @@ env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S3 >/dev/nu
 printf '{"enabled":false}' > "$d/.ship-when-done.json"   # this edit would engage, but enabled:false wins
 assert_eq "no" "$(eng "$d" S3)" "11b. enabled:false opts the repo out (even with fresh work)"
 
+# 11e. single-turn delivery: all work committed in one turn on a branch created that turn — the branch
+# is baselined only AFTER the work, so HEAD/tree never move since baseline, yet the ahead-commits were
+# AUTHORED this session → engaged (the blind spot found in real usage). Pre-existing branches (commits
+# older than the session) stay NOT engaged — the safety guard holds.
+d="$ROOT/t11e"; new_repo "$d" --remote
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S1 >/dev/null   # session starts on main
+git -C "$d" checkout -q -b feat-oneturn
+echo x > "$d/a.txt"; git -C "$d" add -A; git -C "$d" commit -qm "ZV-1 done in one turn"
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S1 >/dev/null   # branch first seen already-ahead, clean
+assert_eq "yes" "$(eng "$d" S1)" "11e. one-turn work on a fresh branch (clean tree) → engaged"
+
+d="$ROOT/t11f"; new_repo "$d" --remote; git -C "$d" checkout -q -b preexisting
+env GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00"   git -C "$d" commit -q --allow-empty -m "old work from before this session"
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S2 >/dev/null   # visiting: ahead, but old
+assert_eq "no" "$(eng "$d" S2)" "11e. pre-existing branch (commits predate the session) → NOT engaged"
+
 # 12a. gate auto-detection from package.json (+ lockfile → runner)
 d="$ROOT/t12"; new_repo "$d"
 printf '{"scripts":{"ts:check":"tsc --noEmit","test":"vitest"}}' > "$d/package.json"; touch "$d/pnpm-lock.yaml"
@@ -391,6 +407,21 @@ assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "git -C $rr push origin f
 assert_eq "$rtop" "$(python3 "$SHIP" resolve --command "cd $rr && git push")" "31. resolve: cd X && git push → X root"
 tpr="$ROOT/t31.jsonl"; printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s/app.txt"}}]}}\n' "$sub" > "$tpr"
 assert_eq "$rtop" "$(python3 "$SHIP" resolve --cwd "$nr" --transcript "$tpr")" "31. resolve: transcript last-edit → its repo root"
+
+# 31b. submodule workspace: cwd at the superproject root, edits in a submodule → the SUBMODULE wins
+# (committing from the superproject would only bump a pointer — the exact Z&V-workspace hazard)
+sup="$ROOT/r31b"; mkdir -p "$sup"; git -C "$sup" init -q -b main
+git -C "$sup" config user.email t@t.t; git -C "$sup" config user.name t; git -C "$sup" config commit.gpgsign false
+printf '[submodule "lib"]\n\tpath = lib\n' > "$sup/.gitmodules"
+mkdir -p "$sup/lib"; git -C "$sup/lib" init -q -b main
+subtop="$(git -C "$sup/lib" rev-parse --show-toplevel)"
+tps="$ROOT/t31b.jsonl"
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/inner.txt"}}]}}\n' "$subtop" > "$tps"
+assert_eq "$subtop" "$(python3 "$SHIP" resolve --cwd "$sup" --transcript "$tps")" "31b. submodule edit from superproject cwd → submodule root"
+suptop="$(git -C "$sup" rev-parse --show-toplevel)"
+tpo="$ROOT/t31b-out.jsonl"
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/outside.txt"}}]}}\n' "$ROOT" > "$tpo"
+assert_eq "$suptop" "$(python3 "$SHIP" resolve --cwd "$sup" --transcript "$tpo")" "31b. edits OUTSIDE the superproject never steal the anchor"
 python3 "$SHIP" baseline --repo "$sub" --session s1
 [ -f "$rtop/.git/swd-session.json" ] && ok "31. root-anchor: baseline from subdir → state at repo root" || ko "31. root-anchor subdir"
 

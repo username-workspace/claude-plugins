@@ -529,13 +529,23 @@ def main():
             skip_files += gfiles
         if not args.include_worktrees:
             skip_dirs += worktree_skips(target) + WORKTREE_GLOBS
-        if not args.include_tests:
+        extra = [s.strip() for s in args.skip_dirs.split(",") if s.strip()]
+        test_skipped = not args.include_tests
+        if test_skipped:
             skip_dirs += TEST_GLOBS
-        skip_dirs += [s.strip() for s in args.skip_dirs.split(",") if s.strip()]
+        skip_dirs += extra
         skip_dirs = list(dict.fromkeys(skip_dirs))
         skip_files = list(dict.fromkeys(skip_files))
         data = run_trivy(target, args.scanners, args.severity, skip_dirs, skip_files)
         vulns, secrets, misconfigs, dep_targets = collect(data)
+        # a leaked key under tests/ is a real leaked key — test dirs are noise for deps/IaC, never for
+        # secrets, so when they were skipped, run a secret-only pass over them and merge what it finds.
+        if test_skipped and "secret" in args.scanners.split(","):
+            rescue = run_trivy(target, "secret", args.severity,
+                               [d for d in skip_dirs if d not in TEST_GLOBS], skip_files)
+            _, rescued, _, _ = collect(rescue)
+            seen = {x["target"] for x in secrets}
+            secrets += [x for x in rescued if x["target"] not in seen]
         classify_vulns(vulns, dep_targets)
         if multi:
             label = Path(target).resolve().name if target == "." else target

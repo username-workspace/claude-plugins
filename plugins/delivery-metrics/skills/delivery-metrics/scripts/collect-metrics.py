@@ -262,8 +262,9 @@ def main():
         if not on_main and c["subject"] not in main_subjects.get(c["repo"], {}).get(name, set()):
             d["wip"] += 1
         s = c["subject"]
+        is_revert = bool(revert_re.match(s))
         m = ticket_re.search(s)
-        ticket = m.group(1) if m else None
+        ticket = m.group(1) if (m and not is_revert) else None
         if ticket:
             d["tickets_all"].add(ticket)
         total_lines = c["ins"] + c["dels"]
@@ -280,7 +281,7 @@ def main():
                 d["no_ticket"] += 1
             if fix_re.search(s):
                 d["fix"] += 1
-            if revert_re.match(s):
+            if is_revert:
                 d["revert"] += 1
             if total_lines > cfg["big_commit_lines"]:
                 d["big"] += 1
@@ -363,6 +364,7 @@ def main():
             "holidays": sorted(holidays),
             "availability": bool(holidays or cfg["leaves"]),
             "default_branch_fallback": sorted(fallback_repos),
+            "team_tickets_delivered": len(set().union(*(d["tickets_main"] for d in devs.values())) if devs else set()),
         },
     }, sys.stdout, ensure_ascii=False, indent=2)
 
