@@ -36,12 +36,17 @@ Hermetic tests idealize composition, environment, time, and state evolution. Two
 - **Observability first** — hooks persist evidence for their silent paths (e.g. every gate run writes
   verdict + output tail + duration to `.git/swd-gate.json`). A red seen only in a hook must be
   diagnosable from a file, never from speculation.
-- **The E2E lane** — `bash tests/e2e/run.sh` replays seeded generated scenarios (flow × gate × CI)
-  against the real sandbox forge `username-workspace/harness-e2e` (plan-steered CI): real pushes, PRs,
-  checks and registration windows. Self-healing: stale `e2e/*` branches/PRs are garbage-collected,
-  each failure is retried once to classify flake vs defect, and persistent failures file a labelled
-  issue on this repo with the reproduction command. Run it deliberately (release, harness change,
-  schedule) — it is excluded from the CI gate.
+- **The E2E lane** — `bash tests/e2e/run.sh` replays seeded generated scenarios (flow × gate × CI ×
+  project archetypes) and human-divergence twists (`--twists`: dirty start, wip/, amend-mid-watch,
+  MR closed, manual push, failing review loop) against the real sandbox forge
+  `username-workspace/harness-e2e` (plan-steered CI): real pushes, PRs, checks and registration
+  windows. Self-healing: stale `e2e/*` branches/PRs are garbage-collected, each failure is retried
+  once to classify flake vs defect, and persistent failures file a labelled issue on this repo with
+  the reproduction command. Run it deliberately (release, harness change) — excluded from the CI gate.
+- **The coverage ledger** — every passing situation is recorded in `tests/e2e/coverage.json`
+  (run id, date, duration); `--coverage` prints what is proven and what was never exercised. "The
+  harness works in situation X" is a claim this file either backs or exposes — campaigns target the
+  holes, not the repetitions.
 
 ## Conventions
 

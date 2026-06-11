@@ -1,0 +1,127 @@
+{
+  "bare/multi-turn/green/green": {
+    "run": "b485d",
+    "proven": "2026-06-11",
+    "secs": 46
+  },
+  "bare/multi-turn/green/red-then-fixed": {
+    "run": "bb2c5",
+    "proven": "2026-06-11",
+    "secs": 82
+  },
+  "bare/multi-turn/red-then-fixed/slow-green": {
+    "run": "b4bb5",
+    "proven": "2026-06-11",
+    "secs": 108
+  },
+  "bare/reedit/green/red-then-fixed": {
+    "run": "b485d",
+    "proven": "2026-06-11",
+    "secs": 82
+  },
+  "bare/reedit/none/red-then-fixed": {
+    "run": "bb23f",
+    "proven": "2026-06-11",
+    "secs": 3
+  },
+  "bare/reedit/none/slow-green": {
+    "run": "b4cc7",
+    "proven": "2026-06-11",
+    "secs": 3
+  },
+  "bare/reedit/timeout/red-then-fixed": {
+    "run": "b4bb5",
+    "proven": "2026-06-11",
+    "secs": 5
+  },
+  "bare/reedit/timeout/slow-green": {
+    "run": "bb2c5",
+    "proven": "2026-06-11",
+    "secs": 5
+  },
+  "bare/single-shot/green/green": {
+    "run": "bb2c5",
+    "proven": "2026-06-11",
+    "secs": 44
+  },
+  "bare/single-shot/green/red-then-fixed": {
+    "run": "b3f4e",
+    "proven": "2026-06-11",
+    "secs": 83
+  },
+  "bare/single-shot/none/red-then-fixed": {
+    "run": "b3f4e",
+    "proven": "2026-06-11",
+    "secs": 3
+  },
+  "bare/single-shot/red-then-fixed/red-then-fixed": {
+    "run": "b4cc7",
+    "proven": "2026-06-11",
+    "secs": 113
+  },
+  "bare/single-shot/timeout/green": {
+    "run": "bb23f",
+    "proven": "2026-06-11",
+    "secs": 5
+  },
+  "bare/single-shot/timeout/red-then-fixed": {
+    "run": "bb2c5",
+    "proven": "2026-06-11",
+    "secs": 5
+  },
+  "go/single-shot/auto/green": {
+    "run": "b495f",
+    "proven": "2026-06-11",
+    "secs": 45
+  },
+  "multi/single-shot/auto/red-then-fixed": {
+    "run": "b495f",
+    "proven": "2026-06-11",
+    "secs": 82
+  },
+  "node/single-shot/auto/green": {
+    "run": "b495f",
+    "proven": "2026-06-11",
+    "secs": 45
+  },
+  "php/single-shot/auto/green": {
+    "run": "b495f",
+    "proven": "2026-06-11",
+    "secs": 45
+  },
+  "pnpm-ts/single-shot/auto/green": {
+    "run": "b495f",
+    "proven": "2026-06-11",
+    "secs": 45
+  },
+  "twist/amend-after-push": {
+    "run": "bbc9a",
+    "proven": "2026-06-11",
+    "secs": 17
+  },
+  "twist/manual-push-midflow": {
+    "run": "bbc9a",
+    "proven": "2026-06-11",
+    "secs": 11
+  },
+  "twist/mr-closed-mid-watch": {
+    "run": "bbc9a",
+    "proven": "2026-06-11",
+    "secs": 13
+  },
+  "twist/preexisting-dirty": {
+    "run": "bbc9a",
+    "proven": "2026-06-11",
+    "secs": 3
+  },
+  "twist/review-loop": {
+    "run": "bbc9a",
+    "proven": "2026-06-11",
+    "secs": 12
+  },
+  "twist/wip-branch": {
+    "run": "bbc9a",
+    "proven": "2026-06-11",
+    "secs": 3
+  }
+}
