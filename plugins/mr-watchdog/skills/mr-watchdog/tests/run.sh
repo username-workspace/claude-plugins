@@ -200,6 +200,16 @@ python3 "$WATCH" baseline --repo "$dm" --session S >/dev/null
 assert_eq "no" "$(python3 "$WATCH" engaged --repo "$dm" --session S)" "9. default branch → never engaged"
 d="$ROOT/o2"; new_repo "$d"
 assert_contains 'no open merge request' "$(STUB_MR_STATE=CLOSED python3 "$WATCH" run --repo "$d" 2>&1)" "9. no open MR → the watcher exits immediately (nothing to watch)"
+# two concurrent sessions: the second baseliner must not erase the first session's engagement
+d="$ROOT/eng2"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session SA >/dev/null
+echo z > "$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session SB >/dev/null
+assert_eq "yes" "$(python3 "$WATCH" engaged --repo "$d" --session SA)" "9. SA still engaged after SB baselined"
+assert_eq "no" "$(python3 "$WATCH" engaged --repo "$d" --session SB)" "9. SB (baselined on the pushed tip) → not engaged"
+# legacy single-session file is read as that one session, then upgraded on next write
+printf '{"session":"OLD","branches":{"feat":{"engaged":true}}}' > "$d/.git/mr-watchdog-session.json"
+assert_eq "yes" "$(python3 "$WATCH" engaged --repo "$d" --session OLD)" "9. legacy single-session file still honoured"
 
 # 10. GUARDRAILS: the watcher is read-only — no commit / push / merge anywhere in the source
 grep -Eq "['\"]merge['\"]" "$WATCH" && ko "10. never merges (no merge command)" || ok "10. never merges (no merge command in source)"

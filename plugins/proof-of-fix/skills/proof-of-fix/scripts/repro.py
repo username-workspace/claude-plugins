@@ -77,6 +77,13 @@ def state_path(repo):
     return os.path.join(git_dir(repo), "proof-of-fix.json")
 
 
+def write_json(path, data):
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
 def read_state(repo):
     try:
         return json.load(open(state_path(repo)))
@@ -86,7 +93,7 @@ def read_state(repo):
 
 def write_state(repo, data):
     try:
-        json.dump(data, open(state_path(repo), "w"))
+        write_json(state_path(repo), data)
     except OSError:
         pass
 
@@ -161,7 +168,7 @@ def cmd_nudge(args):
     except Exception:
         pass
     try:
-        json.dump({"session": args.session}, open(marker, "w"))
+        write_json(marker, {"session": args.session})
     except OSError:
         return
     ctx = NUDGE.format(script=os.path.abspath(__file__), repo=repo)

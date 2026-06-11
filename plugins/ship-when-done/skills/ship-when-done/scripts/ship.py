@@ -6,7 +6,7 @@ feature branch; never merge; refuse to act on a detached/unborn HEAD or mid reba
 attribution in commits.
 """
 import argparse, json, os, re, subprocess, sys, time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from shutil import which
 from urllib.parse import quote
 
@@ -559,7 +559,7 @@ def surface_url_once(repo, branch):
         return False
     data[branch] = sha
     try:
-        json.dump(data, open(p, "w"))
+        write_json(p, data)
     except OSError:
         pass
     return True
@@ -705,16 +705,43 @@ def session_path(repo):
     return os.path.join(git_dir(repo), "swd-session.json")
 
 
-def read_session(repo):
+def write_json(path, data):
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+SESSION_GC_DAYS = 7
+
+
+def migrate_sessions(st):
+    """Legacy single-session shape → the v1 multi-session map. Other top-level keys (a sibling's
+    script pointer) survive the migration."""
+    if "v" in st:
+        return st
+    out = {k: v for k, v in st.items() if k not in ("session", "started", "branches")}
+    out["v"] = 1
+    out["sessions"] = {st.get("session", ""): {"started": st.get("started"),
+                                               "branches": st.get("branches", {})}}
+    return out
+
+
+def read_sessions(repo):
+    """v1 multi-session map. A legacy single-session file is migrated in place on first write,
+    so a session live across the upgrade keeps its baseline."""
     try:
-        return json.load(open(session_path(repo)))
+        st = json.load(open(session_path(repo)))
     except Exception:
-        return None
+        return {"v": 1, "sessions": {}}
+    return migrate_sessions(st)
 
 
-def write_session(repo, data):
+def write_sessions(repo, st):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=SESSION_GC_DAYS)).isoformat()
+    st["sessions"] = {k: v for k, v in st["sessions"].items() if (v.get("started") or cutoff) >= cutoff}
     try:
-        json.dump(data, open(session_path(repo), "w"))
+        write_json(session_path(repo), st)
     except OSError:
         pass
 
@@ -728,14 +755,14 @@ def cmd_baseline(args):
     if not branch:
         return
     now = datetime.now(timezone.utc).isoformat()
-    st = read_session(repo)
-    if not st or st.get("session") != args.session:
-        st = {"session": args.session, "started": now, "branches": {}}
-    st.setdefault("started", now)
-    if branch not in st["branches"]:
+    st = read_sessions(repo)
+    sess = st["sessions"].setdefault(args.session, {"started": now, "branches": {}})
+    sess["started"] = sess.get("started") or now
+    sess.setdefault("branches", {})
+    if branch not in sess["branches"]:
         head, dirty = work_state(repo)
-        st["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
-    write_session(repo, st)
+        sess["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
+    write_sessions(repo, st)
 
 
 def engaged(repo, cfg, session):
@@ -746,28 +773,29 @@ def engaged(repo, cfg, session):
     branch = cur_branch(repo)
     if not branch:
         return False
-    st = read_session(repo)
-    if not st or st.get("session") != session:
+    st = read_sessions(repo)
+    sess = st["sessions"].get(session)
+    if not sess:
         return False
-    entry = st["branches"].get(branch)
+    entry = sess.get("branches", {}).get(branch)
     if entry:
         if entry.get("engaged"):
             return True
         head, dirty = work_state(repo)
         if head != entry.get("head") or dirty != entry.get("dirty"):
             entry["engaged"] = True
-            write_session(repo, st)
+            write_sessions(repo, st)
             return True
     # single-turn delivery: a branch created mid-turn is baselined late (or not at all before the
     # Stop fires) and never shows a delta — but commits ahead of base authored after the session
     # started are ours, entry or no entry
-    started = st.get("started")
+    started = sess.get("started")
     if started:
         base, _ = default_branch(repo, remote_name(repo))
         rc, n, _ = run(["git", "rev-list", "--count", f"{base}..HEAD", f"--since={started}"], repo)
         if rc == 0 and n.isdigit() and int(n) > 0:
-            st["branches"].setdefault(branch, {})["engaged"] = True
-            write_session(repo, st)
+            sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
+            write_sessions(repo, st)
             return True
     return False
 
@@ -802,9 +830,8 @@ def store_gate(repo, cmd, verdict, tail="", secs=0.0):
     'pass' is ever read back as a cache hit."""
     head, dirty = work_state(repo)
     try:
-        json.dump({"head": head, "dirty": dirty, "cmd": cmd, "verdict": verdict,
-                   "tail": tail, "secs": secs},
-                  open(gate_cache_path(repo), "w"))
+        write_json(gate_cache_path(repo), {"head": head, "dirty": dirty, "cmd": cmd,
+                                           "verdict": verdict, "tail": tail, "secs": secs})
     except OSError:
         pass
 
@@ -825,8 +852,7 @@ def review_block_allowed(repo, session):
     if int(d.get("count", 0)) >= 5:
         return False
     try:
-        json.dump({"session": session, "head": head, "dirty": dirty, "count": int(d.get("count", 0)) + 1},
-                  open(p, "w"))
+        write_json(p, {"session": session, "head": head, "dirty": dirty, "count": int(d.get("count", 0)) + 1})
     except OSError:
         pass
     return True
@@ -839,15 +865,14 @@ def stamp_sibling(repo, fname, branch, session, entry):
     if not os.path.isfile(p):
         return
     try:
-        st = json.load(open(p))
+        st = migrate_sessions(json.load(open(p)))
     except Exception:
         return
-    if st.get("session") != session:
-        st["session"] = session
-        st["branches"] = {}
-    st.setdefault("branches", {})[branch] = dict(st.get("branches", {}).get(branch) or {}, **entry)
+    sess = st["sessions"].setdefault(session, {"branches": {}})
+    sess.setdefault("branches", {})
+    sess["branches"][branch] = dict(sess["branches"].get(branch) or {}, **entry)
     try:
-        json.dump(st, open(p, "w"))
+        write_json(p, st)
     except OSError:
         pass
 
@@ -937,7 +962,7 @@ def cmd_mark_done(args):
     data = {"done": True, "summary": (args.summary or "").strip()[:72], "type": args.type}
     p = marker_path(repo)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    json.dump(data, open(p, "w"))
+    write_json(p, data)
     print(f"[ship-when-done] marked done: {data['summary'] or '(no summary)'}")
 
 
@@ -950,7 +975,7 @@ def cmd_claim(args):
     except Exception:
         claims = {}
     claims[args.path] = args.pid
-    json.dump(claims, open(p, "w"))
+    write_json(p, claims)
     print(f"[ship-when-done] claimed {args.path} (pid {args.pid})")
 
 
@@ -965,7 +990,7 @@ def cmd_release(args):
     if claims.pop(args.path, None) is None:
         return
     if claims:
-        json.dump(claims, open(p, "w"))
+        write_json(p, claims)
     else:
         try:
             os.remove(p)
