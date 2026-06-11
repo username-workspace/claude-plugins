@@ -1,7 +1,30 @@
 #!/usr/bin/env bash
 # Run every plugin test suite (tests/run.sh + tests/integration.sh). Stdlib + git + bash only.
+# --impacted [<base>]: run only the suites of plugins touched since <base> (default main) plus the
+# cross-plugin harness suite — any changed path outside plugins/<name>/, or any doubt (unknown base,
+# failing git), falls back to the FULL run. CI stays on the full run.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCOPE="FULL"
+if [ "${1:-}" = "--impacted" ]; then
+  base="${2:-main}"
+  if changed="$( { git -C "$ROOT" diff --name-only "$base...HEAD" && git -C "$ROOT" status --porcelain | cut -c4- | sed 's/.* -> //'; } 2>/dev/null )"; then
+    SCOPE="$(printf '%s\n' "$changed" | python3 "$ROOT/scripts/impacted.py")"
+  fi
+fi
+
+suites(){
+  if [ "$SCOPE" = "FULL" ]; then
+    find "$ROOT/plugins" "$ROOT/tests" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*' | sort
+  else
+    { printf '%s\n' "$SCOPE" | while IFS= read -r d; do
+        [ -d "$ROOT/$d" ] && find "$ROOT/$d" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*'
+      done
+      find "$ROOT/tests" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*'; } | sort
+  fi
+}
+
+[ "$SCOPE" = "FULL" ] || printf 'impacted scope: %s + harness\n' "$(printf '%s' "$SCOPE" | tr '\n' ' ')"
 LOG="$(mktemp)"
 fail=0
 found=0
@@ -15,7 +38,7 @@ while IFS= read -r s; do
     cat "$LOG"
     fail=1
   fi
-done < <(find "$ROOT/plugins" "$ROOT/tests" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*' | sort)
+done < <(suites)
 rm -f "$LOG"
 [ "$found" -gt 0 ] || { echo "no test suites found"; exit 1; }
 echo

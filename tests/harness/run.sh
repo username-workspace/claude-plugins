@@ -211,4 +211,40 @@ sp = u.spec_from_file_location('ship', '$SHIP'); m = u.module_from_spec(sp); sp.
 print(m.watchdog_handoff('$d', 's11') or 'NONE')")
 assert_contains 'run_in_background' "$out" "11. silent first answer (checks not registered yet) → retried, nudge captured"
 
+# --- 12. impacted-suite selection: the gate runs only what the diff touches (FULL stays the truth) --
+sel(){ python3 "$REPO_ROOT/scripts/impacted.py" "$@"; }
+assert_eq "plugins/find-session" "$(sel plugins/find-session/skills/find-session/scripts/x.py)" "12. impacted: plugin file → its plugin"
+assert_eq "FULL" "$(sel scripts/readme.py)" "12. impacted: shared script → full run"
+assert_eq "FULL" "$(sel .claude-plugin/marketplace.json plugins/find-session/web.json)" "12. impacted: mixed shared+plugin → full"
+assert_eq "plugins/a
+plugins/b" "$(sel plugins/a/x plugins/b/y)" "12. impacted: two plugins → both"
+assert_eq "FULL" "$(sel)" "12. impacted: no changed paths → conservative full"
+assert_eq "plugins/a" "$(printf 'plugins/a/x\nplugins/a/y\n' | python3 "$REPO_ROOT/scripts/impacted.py")" "12. impacted: stdin paths, deduped"
+
+# sandbox repo: --impacted runs exactly the touched plugin's suite + the harness; shared path → full
+sb="$ROOT/sandbox"; mkdir -p "$sb/scripts" "$sb/plugins/a/tests" "$sb/plugins/b/tests" "$sb/tests/harness"
+cp "$REPO_ROOT/scripts/run-tests.sh" "$REPO_ROOT/scripts/impacted.py" "$sb/scripts/" 2>/dev/null
+RUNLOG="$ROOT/impacted-ran.log"          # outside the sandbox repo — the log must not dirty it
+printf '#!/usr/bin/env bash\necho a >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/plugins/a/tests/run.sh"
+printf '#!/usr/bin/env bash\necho b >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/plugins/b/tests/run.sh"
+printf '#!/usr/bin/env bash\necho h >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/tests/harness/run.sh"
+git -C "$sb" init -q -b main; git -C "$sb" config user.email t@t.t; git -C "$sb" config user.name t; git -C "$sb" config commit.gpgsign false
+git -C "$sb" add -A; git -C "$sb" commit -qm init
+git -C "$sb" checkout -q -b feat
+echo x > "$sb/plugins/a/file.py"; git -C "$sb" add -A; git -C "$sb" commit -qm "touch a"
+: > "$RUNLOG"; bash "$sb/scripts/run-tests.sh" --impacted main >/dev/null 2>&1
+assert_eq "a
+h" "$(sort "$RUNLOG")" "12. --impacted: exactly the touched plugin + the harness ran"
+echo y > "$sb/scripts/shared.py"
+: > "$RUNLOG"; bash "$sb/scripts/run-tests.sh" --impacted main >/dev/null 2>&1
+assert_eq "a
+b
+h" "$(sort "$RUNLOG")" "12. --impacted: a dirty shared path forces the FULL run"
+rm -f "$sb/scripts/shared.py"
+# a broken base ref can never under-select: conservative full
+: > "$RUNLOG"; bash "$sb/scripts/run-tests.sh" --impacted no-such-base >/dev/null 2>&1
+assert_eq "a
+b
+h" "$(sort "$RUNLOG")" "12. --impacted: unknown base → conservative FULL, never under-selects"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]
