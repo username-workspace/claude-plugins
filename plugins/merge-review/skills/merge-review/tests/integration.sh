@@ -8,8 +8,7 @@ PREPUSH="$PLUGIN/hooks/prepush-hook.py"
 RV="$PLUGIN/skills/merge-review/scripts/review.py"
 PY="$(command -v python3)"
 ROOT="$(mktemp -d)"; PASS=0; FAIL=0
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 export CLAUDE_PLUGIN_ROOT="$PLUGIN"
 
 mkrepo(){ d="$1"; mkdir -p "$d"; git -C "$d" init -q -b main

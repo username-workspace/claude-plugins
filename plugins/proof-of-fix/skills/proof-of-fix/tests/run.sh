@@ -9,13 +9,8 @@ REPRO="$PLUGIN/skills/proof-of-fix/scripts/repro.py"
 PROMPT_HOOK="$PLUGIN/hooks/prompt-hook.py"
 STOP_HOOK="$PLUGIN/hooks/stop-hook.py"
 ROOT="$(mktemp -d)"
-PASS=0; FAIL=0
 
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
-assert_contains(){ case "$2" in *"$1"*) ok "$3";; *) ko "$3 — expected to contain [$1] in [$2]";; esac; }
-assert_absent(){ case "$2" in *"$1"*) ko "$3 — unexpected [$1]";; *) ok "$3";; esac; }
-assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 
 mkrepo(){ local d="$1"; mkdir -p "$d"; git -C "$d" init -q -b main
   git -C "$d" config user.email t@t.t; git -C "$d" config user.name t; git -C "$d" config commit.gpgsign false

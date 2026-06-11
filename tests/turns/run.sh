@@ -10,9 +10,7 @@ SWD="$REPO_ROOT/plugins/ship-when-done"
 SHIP="$SWD/skills/ship-when-done/scripts/ship.py"
 ROOT="$(mktemp -d)"; GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"; PASS=0; FAIL=0
 
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
-assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 
 mkdir -p "$ROOT/bin"
 cat > "$ROOT/bin/gh" <<EOF

@@ -5,7 +5,6 @@
 set -u
 AUDIT="$(cd "$(dirname "$0")/.." && pwd)/scripts/audit.py"
 ROOT="$(mktemp -d)"
-PASS=0; FAIL=0
 
 PY="$(command -v python3)"
 mkdir -p "$ROOT/realbin"
@@ -14,11 +13,8 @@ for b in python3 git bash cat; do ln -sf "$(command -v "$b")" "$ROOT/realbin/$b"
 CACHE="$ROOT/cache"; mkdir -p "$CACHE"
 export TRIVY_CACHE_DIR="$CACHE"
 
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 assert_contains(){ case "$2" in *"$1"*) ok "$3";; *) ko "$3 — expected to contain [$1]";; esac; }
-assert_absent(){ case "$2" in *"$1"*) ko "$3 — unexpected [$1]";; *) ok "$3";; esac; }
-assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
 assert_before(){ # $1 needle-A $2 needle-B $3 haystack $4 msg : A must appear before B
   local a b; a=$(printf '%s' "$3" | grep -n -- "$1" | head -1 | cut -d: -f1)
   b=$(printf '%s' "$3" | grep -n -- "$2" | head -1 | cut -d: -f1)

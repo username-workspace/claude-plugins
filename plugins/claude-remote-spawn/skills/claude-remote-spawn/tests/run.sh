@@ -2,7 +2,6 @@
 set -u
 DRIVER="$(cd "$(dirname "$0")/.." && pwd)/driver.sh"
 ROOT="$(mktemp -d)"
-PASS=0; FAIL=0
 
 # --- stub claude on PATH ---
 mkdir -p "$ROOT/bin"
@@ -22,10 +21,7 @@ chmod +x "$ROOT/bin/script"
 export PATH="$ROOT/bin:$PATH"
 
 # --- helpers ---
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
-assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
-assert_contains(){ case "$2" in *"$1"*) ok "$3";; *) ko "$3 — expected [$2] to contain [$1]";; esac; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 assert_nonzero(){ [ "$1" -ne 0 ] && ok "$2" || ko "$2 — expected nonzero exit, got 0"; }
 
 # Shared env: point STATE_DIR and CLAUDE_PROJECTS_DIR at isolated temp dirs.

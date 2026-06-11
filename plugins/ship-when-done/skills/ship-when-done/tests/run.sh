@@ -5,7 +5,6 @@ set -u
 SHIP="$(cd "$(dirname "$0")/.." && pwd)/scripts/ship.py"
 ROOT="$(mktemp -d)"
 GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"
-PASS=0; FAIL=0
 # mark a repo engaged (as if this session produced the work) so the ladder tests run; the engagement
 # DETECTION itself (baseline → work) is exercised separately in test 11b.
 arm(){ printf '{"v":1,"sessions":{"":{"branches":{"feat":{"engaged":true}}}}}' > "$1/.git/swd-session.json"; }
@@ -29,11 +28,7 @@ EOF
 chmod +x "$ROOT/bin/gh"
 export PATH="$ROOT/bin:$PATH"
 
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
-assert_contains(){ case "$2" in *"$1"*) ok "$3";; *) ko "$3 — expected to contain [$1] in [$2]";; esac; }
-assert_absent(){ case "$2" in *"$1"*) ko "$3 — unexpected [$1]";; *) ok "$3";; esac; }
-assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 
 new_repo(){ # $1=dir  [$2=--remote]  [$3=forge-host, default github.com]
   local d="$1" host="${3:-github.com}"; mkdir -p "$d"; git -C "$d" init -q -b main
