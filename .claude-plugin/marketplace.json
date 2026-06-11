@@ -49,7 +49,7 @@
     },
     {
       "name": "security-audit",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "source": "./plugins/security-audit",
       "description": "Full Trivy security audit — dependency CVEs across every ecosystem, secrets, and IaC misconfigurations — as a prioritised Markdown report and a dark HTML dashboard. Report-only, language-agnostic, Trivy the only dependency.",
       "category": "development",

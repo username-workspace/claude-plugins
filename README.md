@@ -35,7 +35,7 @@ that fails before the fix and passes after it.
 | [`ship-when-done`](./plugins/ship-when-done) | 1.3.2 | DevOps | Commit at each milestone, push so nothing is lost, open the PR when it's actually done. |
 | [`coding-agent-usage`](./plugins/coding-agent-usage) | 1.1.5 | FinOps | See your AI coding-agent usage — and where you rank against other developers. |
 | [`proof-of-fix`](./plugins/proof-of-fix) | 1.0.0 | Quality | Prove the bug before fixing it — then prove the fix with the same probe. Red before, green after. |
-| [`security-audit`](./plugins/security-audit) | 1.3.2 | Security | One Trivy scan, every ecosystem — a prioritised security report. |
+| [`security-audit`](./plugins/security-audit) | 1.3.3 | Security | One Trivy scan, every ecosystem — a prioritised security report. |
 <!-- plugins:end -->
 
 ## Quality
