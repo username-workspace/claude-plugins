@@ -75,6 +75,8 @@ python3 scripts/watch.py verify --repo .
 - **Only watches**: it polls CI and reads logs — the fix is done by your interactive session.
 - **Never the default branch**, never a `wip/` branch, never a detached HEAD (it just won't watch).
 - **Engagement**: only a branch this session pushed; the launch nudge fires **once per pipeline HEAD**.
+- **Already green at the Stop**: nothing to watch — the verdict itself is handed to the session (once
+  per HEAD, bound to the exact sha; a stale branch-level green is not a verdict).
 
 ## Enable & configure
 
