@@ -23,6 +23,7 @@ from pathlib import Path
 
 PROJECTS = Path(os.environ.get("CLAUDE_PROJECTS_DIR", Path.home() / ".claude" / "projects"))
 TICKET_RE = re.compile(r"[A-Z]{2,}-\d+")
+NOISE_KEYS = {"UTF", "SHA", "GPT", "ISO", "RFC", "AES", "RSA", "TLS"}
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 CWD_RE = re.compile(r'"cwd"\s*:\s*"([^"]+)"')
 
@@ -71,7 +72,7 @@ def scan(dirs, regexes, since):
                 for i, rx in enumerate(regexes):
                     if rx.search(line):
                         hits[i] += 1
-                tickets.update(TICKET_RE.findall(line))
+                tickets.update(t for t in TICKET_RE.findall(line) if t.split("-", 1)[0] not in NOISE_KEYS)
             if not lines or any(h == 0 for h in hits):
                 continue
             total = sum(hits)

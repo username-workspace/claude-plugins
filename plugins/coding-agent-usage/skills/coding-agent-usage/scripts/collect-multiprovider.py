@@ -5,6 +5,7 @@ from datetime import date
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH_PATH = os.path.join(HERE, "..", "assets", "benchmarks.json")
+CCUSAGE_VERSION = "20.0.11"
 
 PROVIDERS = {
     "Anthropic": ("#a8231f", ("claude", "opus", "sonnet", "haiku")),
@@ -48,7 +49,7 @@ def load_daily(argv):
         with open(os.path.expanduser(argv[1])) as f:
             return json.load(f)
     out = subprocess.run(
-        ["npx", "-y", "ccusage@latest", "daily", "--json"],
+        ["npx", "-y", f"ccusage@{CCUSAGE_VERSION}", "daily", "--json"],
         capture_output=True, text=True, timeout=180,
     )
     if out.returncode != 0 or not out.stdout.strip():

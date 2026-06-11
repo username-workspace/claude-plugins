@@ -124,6 +124,16 @@ out=$(fs migrate schema)
 assert_contains 'key ZV-4242 (x3)' "$out" "11. dominant ticket key reported with count"
 rm -rf "$PROJECTS"
 
+# 11b. tech tokens (UTF-8, SHA-256, GPT-4) are not ticket keys — real keys still surface
+d="$ROOT/work/t11b"; mkdir -p "$d"; cd "$d"; HERE="$PROJECTS/$(slug_of)"
+jsonl "$HERE" noisy "encode UTF-8 and SHA-256 digest ZV-7" "GPT-4 prompt UTF-8 encode ZV-7" "UTF-8 digest again"
+out=$(fs encode digest)
+assert_absent 'key UTF-8' "$out" "11b. UTF-8 is not a ticket key"
+assert_absent 'key SHA-256' "$out" "11b. SHA-256 is not a ticket key"
+assert_absent 'key GPT-4' "$out" "11b. GPT-4 is not a ticket key"
+assert_contains 'key ZV-7 (x2)' "$out" "11b. the real ticket key still dominates"
+rm -rf "$PROJECTS"
+
 # 12. no match — all concepts required, none qualifies → friendly message, exit 0
 d="$ROOT/work/t12"; mkdir -p "$d"; cd "$d"; HERE="$PROJECTS/$(slug_of)"
 jsonl "$HERE" only "needle present here"
