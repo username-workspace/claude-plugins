@@ -108,9 +108,20 @@ def cmd_baseline(args):
     write_sessions(repo, st)
 
 
+def provenance_paths(repo, sid):
+    try:
+        st = json.load(open(os.path.join(git_dir(repo), "swd-provenance.json")))
+    except Exception:
+        return set()
+    return set((st.get("sessions", {}).get(sid) or {}).get("paths", []))
+
+
 def engaged(repo, cfg, session):
     """True if THIS session produced work on the current feature branch — HEAD advanced or the tree
-    changed since this session's baseline. `enabled: false` opts a repo out."""
+    changed since this session's baseline, or the branch carries paths this session observably edited
+    (ship-when-done provenance, inert when the sibling is absent). The provenance lane needs no
+    baseline at all — a branch created mid-turn, or a session started on a detached HEAD, has none.
+    `enabled: false` opts a repo out."""
     if not cfg.get("enabled", True):
         return False
     branch = feature_branch(repo, cfg)
@@ -118,18 +129,26 @@ def engaged(repo, cfg, session):
         return False
     st = read_sessions(repo)
     sess = st["sessions"].get(session)
-    if not sess:
-        return False
-    entry = sess.get("branches", {}).get(branch)
-    if not entry:
-        return False
-    if entry.get("engaged"):
-        return True
-    head, dirty = work_state(repo)
-    if head != entry.get("head") or dirty != entry.get("dirty"):
-        entry["engaged"] = True
-        write_sessions(repo, st)
-        return True
+    entry = (sess or {}).get("branches", {}).get(branch)
+    if entry:
+        if entry.get("engaged"):
+            return True
+        head, dirty = work_state(repo)
+        if head != entry.get("head") or dirty != entry.get("dirty"):
+            entry["engaged"] = True
+            write_sessions(repo, st)
+            return True
+    prov = provenance_paths(repo, session)
+    if prov:
+        _, names, _ = run(["git", "diff", "--name-only", f"{default_branch(repo, remote_name(repo))}...HEAD"], repo)
+        _, porcelain, _ = run(["git", "status", "--porcelain"], repo)
+        carried = set(names.splitlines()) | {l[3:].split(" -> ")[-1] for l in porcelain.splitlines() if l}
+        if prov & carried:
+            sess = st["sessions"].setdefault(session, {"started": datetime.now(timezone.utc).isoformat(),
+                                                       "branches": {}})
+            sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
+            write_sessions(repo, st)
+            return True
     return False
 
 
