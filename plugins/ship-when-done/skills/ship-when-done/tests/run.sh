@@ -209,6 +209,12 @@ echo a > "$d/a.txt"                                   # SA's work
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session SB >/dev/null   # SB arrives, tree already dirty
 assert_eq "yes" "$(eng "$d" SA)" "11i. SA still engaged after SB baselined"
 assert_eq "no"  "$(eng "$d" SB)" "11i. SB (baselined on the dirty tree) NOT engaged"
+# sessions idle past the GC window are dropped on the next write; live ones survive
+d="$ROOT/t11igc"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"v":1,"sessions":{"STALE":{"started":"2020-01-01T00:00:00+00:00","branches":{}}}}' > "$d/.git/swd-session.json"
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session FRESH >/dev/null
+case "$(cat "$d/.git/swd-session.json")" in *STALE*) ko "11i. stale session GC'd on write";; *) ok "11i. stale session GC'd on write";; esac
+case "$(cat "$d/.git/swd-session.json")" in *FRESH*) ok "11i. live session survives the GC";; *) ko "11i. live session survives the GC";; esac
 
 # 12a. gate auto-detection from package.json (+ lockfile → runner)
 d="$ROOT/t12"; new_repo "$d"
