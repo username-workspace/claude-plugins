@@ -228,6 +228,7 @@ RUNLOG="$ROOT/impacted-ran.log"          # outside the sandbox repo — the log 
 printf '#!/usr/bin/env bash\necho a >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/plugins/a/tests/run.sh"
 printf '#!/usr/bin/env bash\necho b >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/plugins/b/tests/run.sh"
 printf '#!/usr/bin/env bash\necho h >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/tests/harness/run.sh"
+echo lib > "$sb/plugins/a/lib.py"
 git -C "$sb" init -q -b main; git -C "$sb" config user.email t@t.t; git -C "$sb" config user.name t; git -C "$sb" config commit.gpgsign false
 git -C "$sb" add -A; git -C "$sb" commit -qm init
 git -C "$sb" checkout -q -b feat
@@ -246,5 +247,28 @@ rm -f "$sb/scripts/shared.py"
 assert_eq "a
 b
 h" "$(sort "$RUNLOG")" "12. --impacted: unknown base → conservative FULL, never under-selects"
+# INCIDENT (review): rename collapsing dropped the donor side — both feeds must see old AND new path
+git -C "$sb" checkout -q -b mv-cross main
+git -C "$sb" mv plugins/a/lib.py plugins/b/lib.py; git -C "$sb" commit -qm "move a→b"
+: > "$RUNLOG"; bash "$sb/scripts/run-tests.sh" --impacted main >/dev/null 2>&1
+assert_eq "a
+b
+h" "$(sort "$RUNLOG")" "12. --impacted: committed cross-plugin rename runs BOTH sides' suites"
+git -C "$sb" checkout -q -b mv-shared main
+echo s > "$sb/scripts/util.py"; git -C "$sb" add -A; git -C "$sb" commit -qm "shared util"
+git -C "$sb" mv scripts/util.py plugins/b/util.py
+: > "$RUNLOG"; bash "$sb/scripts/run-tests.sh" --impacted main >/dev/null 2>&1
+assert_eq "a
+b
+h" "$(sort "$RUNLOG")" "12. --impacted: staged rename OUT of scripts/ → FULL (the donor is shared)"
+git -C "$sb" checkout -qf feat 2>/dev/null
+# INCIDENT (review): a failing `git status` was masked by the pipeline's exit status → under-selection
+mkdir -p "$sb/shim"
+printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = status ] && exit 128; done\nexec "%s" "$@"\n' "$(command -v git)" > "$sb/shim/git"
+chmod +x "$sb/shim/git"
+: > "$RUNLOG"; env PATH="$sb/shim:$PATH" bash "$sb/scripts/run-tests.sh" --impacted main >/dev/null 2>&1
+assert_eq "a
+b
+h" "$(sort "$RUNLOG")" "12. --impacted: git status failure → FULL, never a silent under-selection"
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

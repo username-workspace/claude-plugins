@@ -8,8 +8,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCOPE="FULL"
 if [ "${1:-}" = "--impacted" ]; then
   base="${2:-main}"
-  if changed="$( { git -C "$ROOT" diff --name-only "$base...HEAD" && git -C "$ROOT" status --porcelain | cut -c4- | sed 's/.* -> //'; } 2>/dev/null )"; then
-    SCOPE="$(printf '%s\n' "$changed" | python3 "$ROOT/scripts/impacted.py")"
+  # --no-renames / status.renames=false: a rename must feed BOTH sides — collapsing it would skip the
+  # donor plugin's suite. Each lane's exit status is checked on its own: any git failure → FULL.
+  if committed="$(git -C "$ROOT" diff --name-only --no-renames "$base...HEAD" 2>/dev/null)" &&
+     worktree="$(git -C "$ROOT" -c status.renames=false status --porcelain 2>/dev/null)"; then
+    SCOPE="$({ printf '%s\n' "$committed"; printf '%s\n' "$worktree" | cut -c4-; } | python3 "$ROOT/scripts/impacted.py")"
   fi
 fi
 
@@ -18,7 +21,7 @@ suites(){
     find "$ROOT/plugins" "$ROOT/tests" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*' | sort
   else
     { printf '%s\n' "$SCOPE" | while IFS= read -r d; do
-        [ -d "$ROOT/$d" ] && find "$ROOT/$d" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*'
+        [ -n "$d" ] && [ -d "$ROOT/$d" ] && find "$ROOT/$d" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*'
       done
       find "$ROOT/tests" -type f \( -name run.sh -o -name integration.sh \) -path '*tests*' ! -path '*e2e*'; } | sort
   fi
