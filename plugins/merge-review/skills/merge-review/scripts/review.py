@@ -116,6 +116,23 @@ def provenance_paths(repo, sid):
     return set((st.get("sessions", {}).get(sid) or {}).get("paths", []))
 
 
+def carried_paths(repo):
+    """NUL-delimited feeds (-z, raw): C-quoting would break the verbatim intersection with provenance
+    paths, and stripping would eat a worktree-only entry's leading space. In porcelain -z a rename's
+    original path is a bare extra token — skipped."""
+    _, names, _ = run(["git", "diff", "--name-only", "-z",
+                       f"{default_branch(repo, remote_name(repo))}...HEAD"], repo, raw=True)
+    paths = set(filter(None, names.split("\0")))
+    _, porcelain, _ = run(["git", "status", "--porcelain", "-z"], repo, raw=True)
+    toks = iter(porcelain.split("\0"))
+    for t in toks:
+        if len(t) > 3 and t[2] == " ":
+            paths.add(t[3:])
+            if t[0] in "RC":
+                next(toks, None)
+    return paths
+
+
 def engaged(repo, cfg, session):
     """True if THIS session produced work on the current feature branch — HEAD advanced or the tree
     changed since this session's baseline, or the branch carries paths this session observably edited
@@ -139,16 +156,12 @@ def engaged(repo, cfg, session):
             write_sessions(repo, st)
             return True
     prov = provenance_paths(repo, session)
-    if prov:
-        _, names, _ = run(["git", "diff", "--name-only", f"{default_branch(repo, remote_name(repo))}...HEAD"], repo)
-        _, porcelain, _ = run(["git", "status", "--porcelain"], repo)
-        carried = set(names.splitlines()) | {l[3:].split(" -> ")[-1] for l in porcelain.splitlines() if l}
-        if prov & carried:
-            sess = st["sessions"].setdefault(session, {"started": datetime.now(timezone.utc).isoformat(),
-                                                       "branches": {}})
-            sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
-            write_sessions(repo, st)
-            return True
+    if prov and prov & carried_paths(repo):
+        sess = st["sessions"].setdefault(session, {"started": datetime.now(timezone.utc).isoformat(),
+                                                   "branches": {}})
+        sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
+        write_sessions(repo, st)
+        return True
     return False
 
 
