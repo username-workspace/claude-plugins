@@ -57,7 +57,7 @@
     },
     {
       "name": "ship-when-done",
-      "version": "1.6.2",
+      "version": "1.6.3",
       "source": "./plugins/ship-when-done",
       "description": "A Stop-hook harness that commits at each milestone (the commit is the anti-loss), pushes the feature branch, and opens a draft PR/MR once the work is provably done — the goal's checklist satisfied AND the project's quality gate actually green. If a sibling merge-review gate is active, it HOLDS the push until that review passes the current HEAD — the quality gate runs before anything reaches the remote — and continues your session to run it. Forge-agnostic (GitHub/GitLab/Bitbucket): uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency. Branch-first, never commits or pushes the default branch, never merges, no AI attribution. Engages on its own only on work this session produced (never a pre-existing dirty tree); opt out per repo.",
       "category": "development",
