@@ -9,9 +9,14 @@ The Stop hook only nudges the session to launch it (a `block` continuation, once
 Read-only: it never commits, pushes, or merges, and runs no model itself. Opt a repo out with
 enabled:false.
 """
-import argparse, json, os, re, subprocess, sys, time
-from datetime import datetime, timedelta, timezone
+import argparse, json, os, re, sys, time
+from datetime import datetime, timezone
 from shutil import which
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _kernel
+from _kernel import (added_lines, bypass_in_diff,  # unused here: re-exported, the suite's pure tests call them
+                     cmd_resolve, cur_branch, default_branch, detect_forge, fake_green, git_dir, head_sha,
+                     remote_name, repo_root, run, write_json)
 
 DEFAULTS = {
     "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
@@ -25,44 +30,6 @@ DEFAULTS = {
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
 
-# A change that hides a failure instead of resolving it — surfaced by `verify` so a fix can't fake green.
-BYPASS_PATTERNS = [
-    r"--no-verify",
-    r"\|\|\s*true\b",
-    r"\bcontinue-on-error:\s*true",
-    r"\ballow_failure:\s*true",
-    r"\bwhen:\s*never\b",
-    r"@(?:pytest\.mark\.)?(?:skip|xfail)\b",
-    r"\bpytest\.skip\b|\b(?:unittest|self)\.skip(?:Test)?\b",
-    r"\b(?:it|test|describe)\.skip\b",
-    r"\bxit\b|\bxdescribe\b",
-    r"\.skip\s*\(",
-    r"\bassert\s+(?:True|1)\b",
-    r"\bexpect\(\s*true\s*\)\.tobe\(\s*true\s*\)",
-    r"--maxfail\b",
-    r"eslint-disable",
-    r"#\s*type:\s*ignore",
-    r"#\s*noqa(?!:\s*E501)",
-    r"@ts-(?:ignore|nocheck|expect-error)",
-    r"\bskip_tests?\b",
-]
-
-TEST_PATH = re.compile(r"(^|/)(tests?/|test_|conftest|.*[._-](test|spec)\.)", re.I)
-
-
-def run(cmd, cwd, check=False, timeout=None):
-    try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError:
-        if check:
-            raise
-        return 127, "", f"{cmd[0]}: not found"
-    except subprocess.TimeoutExpired:
-        return 124, "", "timed out"
-    if check and p.returncode != 0:
-        raise RuntimeError(f"{' '.join(cmd)} failed: {p.stderr.strip()}")
-    return p.returncode, p.stdout.strip(), p.stderr.strip()
-
 
 def load_config(repo, path=None):
     cfg = dict(DEFAULTS)
@@ -75,135 +42,8 @@ def load_config(repo, path=None):
     return cfg
 
 
-def git_dir(repo):
-    rc, gd, _ = run(["git", "rev-parse", "--git-dir"], repo)
-    gd = gd if (rc == 0 and gd) else ".git"
-    return gd if os.path.isabs(gd) else os.path.join(repo, gd)
-
-
-def current_branch(repo):
-    rc, b, _ = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], repo)
-    return b if rc == 0 else None
-
-
-def head_sha(repo):
-    rc, sha, _ = run(["git", "rev-parse", "HEAD"], repo)
-    return sha if rc == 0 else ""
-
-
-def remote_name(repo):
-    rc, up, _ = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], repo)
-    if rc == 0 and "/" in up:
-        return up.split("/", 1)[0]
-    _, remotes, _ = run(["git", "remote"], repo)
-    rl = [r for r in remotes.splitlines() if r.strip()]
-    return ("origin" if "origin" in rl else rl[0]) if rl else None
-
-
-def default_branch(repo, remote):
-    if remote:
-        rc, out, _ = run(["git", "symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD"], repo)
-        if rc == 0 and out:
-            return out.rsplit("/", 1)[-1]
-    for b in ("main", "master"):
-        rc, _, _ = run(["git", "rev-parse", "--verify", "--quiet", b], repo)
-        if rc == 0:
-            return b
-    return "main"
-
-
-def detect_forge(repo, cfg, remote):
-    if cfg.get("forge"):
-        return cfg["forge"]
-    rc, url, _ = run(["git", "remote", "get-url", remote or "origin"], repo)
-    h = (url or "").lower()
-    return "github" if "github" in h else "gitlab" if "gitlab" in h else "unknown"
-
-
 def forge_cli(forge):
     return "gh" if forge == "github" else "glab" if forge == "gitlab" else None
-
-
-# --- active-repo resolution: the repo we're working in (not the launch dir), root-anchored ---------
-
-def git_toplevel(path):
-    if not path:
-        return None
-    rc, top, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], ".")
-    return top if rc == 0 and top else None
-
-
-def repo_root(path):
-    ap = os.path.abspath(path or ".")
-    return git_toplevel(ap) or ap
-
-
-def repo_from_command(cmd):
-    m = re.search(r"\bgit\b[^&|;]*?\s-C\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "") \
-        or re.search(r"(?:^|&&|;|\|)\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "")
-    return m.group(1).strip("\"'") if m else None
-
-
-def last_edited_file(tp):
-    if not tp or not os.path.isfile(tp):
-        return None
-    last, edits = None, {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
-    try:
-        for line in open(tp, errors="ignore"):
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            if d.get("type") != "assistant":
-                continue
-            content = (d.get("message") or {}).get("content")
-            if isinstance(content, list):
-                for b in content:
-                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in edits:
-                        inp = b.get("input") or {}
-                        fp = inp.get("file_path") or inp.get("notebook_path")
-                        if fp:
-                            last = fp
-    except Exception:
-        return None
-    return last
-
-
-def resolve_repo(cwd, transcript, command):
-    """The git repo root we're actually working in: the one named in a push command; else, in a
-    submodule workspace (cwd repo has .gitmodules), the repo of the most-recently edited file when it
-    is nested inside the cwd's — acting on the superproject would only bump a pointer; else the cwd's
-    repo, else the edited file's. None when no git repo is in scope."""
-    if command:
-        p = repo_from_command(command)
-        if p:
-            if not os.path.isabs(p) and cwd:
-                p = os.path.join(cwd, p)
-            r = git_toplevel(p)
-            if r:
-                return r
-    cwd_repo = git_toplevel(cwd) if cwd else None
-    if cwd_repo and transcript and os.path.isfile(os.path.join(cwd_repo, ".gitmodules")):
-        f = last_edited_file(transcript)
-        if f:
-            edited = git_toplevel(os.path.dirname(f))
-            if edited and edited != cwd_repo and edited.startswith(cwd_repo + os.sep):
-                return edited
-    if cwd_repo:
-        return cwd_repo
-    if transcript:
-        f = last_edited_file(transcript)
-        if f:
-            r = git_toplevel(os.path.dirname(f))
-            if r:
-                return r
-    return None
-
-
-def cmd_resolve(args):
-    r = resolve_repo(args.cwd, args.transcript, args.command)
-    if r:
-        print(r)
 
 
 # --- remote state: open MR + CI status -------------------------------------------------------------
@@ -332,7 +172,7 @@ def upstream_sha(repo):
 
 def feature_branch(repo, cfg):
     """The current branch if it's one we'd ever watch (a feature branch with a remote), else None."""
-    b = current_branch(repo)
+    b = cur_branch(repo)
     if not b or b.startswith(cfg["skip_marker"]) or b in COMMON_TRUNKS:
         return None
     remote = remote_name(repo)
@@ -345,35 +185,12 @@ def session_path(repo):
     return os.path.join(git_dir(repo), "mr-watchdog-session.json")
 
 
-def write_json(path, data):
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
-
-
-SESSION_GC_DAYS = 7
-
-
 def read_sessions(repo):
-    """v1 multi-session map. Anything else — absent, corrupt, or pre-v1 (the one-minor migration
-    window is closed) — reads as empty and is rewritten as v1 on the next write."""
-    try:
-        st = json.load(open(session_path(repo)))
-    except Exception:
-        st = None
-    if isinstance(st, dict) and "v" in st and isinstance(st.get("sessions"), dict):
-        return st
-    return {"v": 1, "sessions": {}}
+    return _kernel.read_sessions(session_path(repo))
 
 
 def write_sessions(repo, st):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=SESSION_GC_DAYS)).isoformat()
-    st["sessions"] = {k: v for k, v in st["sessions"].items() if (v.get("started") or cutoff) >= cutoff}
-    try:
-        write_json(session_path(repo), st)
-    except OSError:
-        pass
+    _kernel.write_sessions(session_path(repo), st)
 
 
 def cmd_baseline(args):
@@ -383,7 +200,7 @@ def cmd_baseline(args):
     so it is written for any branch of a repo with a remote, including the trunk."""
     repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
-    if not cfg.get("enabled", True) or not current_branch(repo) or not remote_name(repo):
+    if not cfg.get("enabled", True) or not cur_branch(repo) or not remote_name(repo):
         return
     now = datetime.now(timezone.utc).isoformat()
     st = read_sessions(repo)
@@ -428,58 +245,6 @@ def cmd_engaged(args):
 
 # --- fake-green detection (used by `verify`, run in your live session before committing a fix) ------
 
-def added_lines(diff):
-    return "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
-
-
-def bypass_in_diff(diff):
-    for pat in BYPASS_PATTERNS:
-        m = re.search(pat, diff, re.I)
-        if m:
-            return m.group(0)
-    return None
-
-
-def deleted_tests(repo):
-    _, ns, _ = run(["git", "diff", "HEAD", "--name-status"], repo)
-    return [p.split("\t")[-1] for p in ns.splitlines()
-            if p[:1] == "D" and TEST_PATH.search(p.split("\t")[-1])]
-
-
-def weakened_tests(repo):
-    _, ns, _ = run(["git", "diff", "HEAD", "--name-status"], repo)
-    for line in ns.splitlines():
-        parts = line.split("\t")
-        if parts[0][:1] == "M" and TEST_PATH.search(parts[-1]):
-            _, d, _ = run(["git", "diff", "HEAD", "--", parts[-1]], repo)
-            removed = [l for l in d.splitlines() if l.startswith("-") and not l.startswith("---")]
-            if any(re.search(r"\b(assert|expect|should|require)\b", r, re.I) for r in removed):
-                return parts[-1]
-    return None
-
-
-def read_capped(repo, rel, cap=20000):
-    try:
-        return open(os.path.join(repo, rel), errors="ignore").read()[:cap]
-    except OSError:
-        return ""
-
-
-def fake_green(repo):
-    """Returns a short reason the working-tree change fakes green, else '' (the change looks honest)."""
-    g = deleted_tests(repo)
-    if g:
-        return f"deleted-test:{g[0][-40:]}"
-    w = weakened_tests(repo)
-    if w:
-        return f"weakened-test:{w[-40:]}"
-    _, tracked, _ = run(["git", "diff", "HEAD"], repo)
-    _, un, _ = run(["git", "ls-files", "--others", "--exclude-standard"], repo)
-    new_files = [f for f in un.splitlines() if f]
-    scan = added_lines(tracked) + "\n" + "\n".join(read_capped(repo, f) for f in new_files)
-    hit = bypass_in_diff(scan)
-    return f"bypass:{hit[:40]}" if hit else ""
-
 
 def cmd_verify(args):
     repo = repo_root(args.repo)
@@ -497,7 +262,7 @@ def guard_state(repo, cfg):
     rc, _, _ = run(["git", "rev-parse", "--is-inside-work-tree"], repo)
     if rc != 0:
         raise ValueError("not-a-git-repo")
-    branch = current_branch(repo)
+    branch = cur_branch(repo)
     if not branch:
         raise ValueError("detached-or-unborn")
     if branch.startswith(cfg["skip_marker"]):
@@ -516,7 +281,7 @@ def guard_state(repo, cfg):
 
 def tick(repo, cfg, branch, forge, remote):
     """One poll. Returns {'state': continue|green|needs-fix|no-mr|branch-changed}. Read-only."""
-    if current_branch(repo) != branch:
+    if cur_branch(repo) != branch:
         return {"state": "branch-changed"}
     if not mr_open(repo, forge, branch):
         return {"state": "no-mr"}
@@ -587,7 +352,7 @@ def cmd_run(args):
     deadline = time.time() + float(args.timeout or cfg.get("watch_timeout", 3600))
     errors = 0
     while True:
-        if current_branch(repo) != branch or head_sha(repo) != head:
+        if cur_branch(repo) != branch or head_sha(repo) != head:
             print("[mr-watchdog] stopped: branch/HEAD moved — a fresh watcher starts after the next push")
             return
         if not mr_open(repo, forge, branch):

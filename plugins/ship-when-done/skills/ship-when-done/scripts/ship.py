@@ -6,9 +6,12 @@ feature branch; never merge; refuse to act on a detached/unborn HEAD or mid reba
 attribution in commits.
 """
 import argparse, json, os, re, subprocess, sys, time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from shutil import which
 from urllib.parse import quote
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _kernel
+from _kernel import cmd_resolve, cur_branch, git_dir, git_toplevel, remote_name, repo_root, run, write_json
 
 DEFAULTS = {
     "on_done": "draft-pr",            # draft-pr | ready-pr | suggest
@@ -27,18 +30,6 @@ DEFAULTS = {
 }
 
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
-
-
-def run(cmd, cwd, check=False, raw=False):
-    try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    except FileNotFoundError:
-        if check:
-            raise
-        return 127, "", f"{cmd[0]}: not found"
-    if check and p.returncode != 0:
-        raise RuntimeError(f"{' '.join(cmd)} failed: {p.stderr.strip()}")
-    return p.returncode, p.stdout if raw else p.stdout.strip(), p.stderr.strip()
 
 
 def porcelain_status(repo, uall=False):
@@ -112,12 +103,6 @@ def load_config(repo, path=None):
     return cfg
 
 
-def git_dir(repo):
-    rc, gd, _ = run(["git", "rev-parse", "--git-dir"], repo)
-    gd = gd if (rc == 0 and gd) else ".git"
-    return gd if os.path.isabs(gd) else os.path.join(repo, gd)
-
-
 def in_progress_op(repo):
     gd = git_dir(repo)
     for name, op in (("rebase-merge", "rebase"), ("rebase-apply", "rebase"), ("MERGE_HEAD", "merge"),
@@ -125,15 +110,6 @@ def in_progress_op(repo):
         if os.path.exists(os.path.join(gd, name)):
             return op
     return None
-
-
-def remote_name(repo):
-    rc, up, _ = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], repo)
-    if rc == 0 and "/" in up:
-        return up.split("/", 1)[0]
-    _, remotes, _ = run(["git", "remote"], repo)
-    rl = [r for r in remotes.splitlines() if r.strip()]
-    return ("origin" if "origin" in rl else rl[0]) if rl else None
 
 
 def default_branch(repo, remote):
@@ -617,91 +593,8 @@ def cmd_ladder(args):
 
 # --- active-repo resolution: the repo we're working in (not the launch dir), root-anchored ---------
 
-def git_toplevel(path):
-    if not path:
-        return None
-    rc, top, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], ".")
-    return top if rc == 0 and top else None
-
-
-def repo_root(path):
-    ap = os.path.abspath(path or ".")
-    return git_toplevel(ap) or ap
-
-
-def repo_from_command(cmd):
-    m = re.search(r"\bgit\b[^&|;]*?\s-C\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "") \
-        or re.search(r"(?:^|&&|;|\|)\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd or "")
-    return m.group(1).strip("\"'") if m else None
-
-
-def last_edited_file(tp):
-    if not tp or not os.path.isfile(tp):
-        return None
-    last, edits = None, {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
-    try:
-        for line in open(tp, errors="ignore"):
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            if d.get("type") != "assistant":
-                continue
-            content = (d.get("message") or {}).get("content")
-            if isinstance(content, list):
-                for b in content:
-                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in edits:
-                        inp = b.get("input") or {}
-                        fp = inp.get("file_path") or inp.get("notebook_path")
-                        if fp:
-                            last = fp
-    except Exception:
-        return None
-    return last
-
-
-def resolve_repo(cwd, transcript, command):
-    """The git repo root we're actually working in: the one named in a push command; else, in a
-    submodule workspace (cwd repo has .gitmodules), the repo of the most-recently edited file when it
-    is nested inside the cwd's — acting on the superproject would only bump a pointer; else the cwd's
-    repo, else the edited file's. None when no git repo is in scope."""
-    if command:
-        p = repo_from_command(command)
-        if p:
-            if not os.path.isabs(p) and cwd:
-                p = os.path.join(cwd, p)
-            r = git_toplevel(p)
-            if r:
-                return r
-    cwd_repo = git_toplevel(cwd) if cwd else None
-    if cwd_repo and transcript and os.path.isfile(os.path.join(cwd_repo, ".gitmodules")):
-        f = last_edited_file(transcript)
-        if f:
-            edited = git_toplevel(os.path.dirname(f))
-            if edited and edited != cwd_repo and edited.startswith(cwd_repo + os.sep):
-                return edited
-    if cwd_repo:
-        return cwd_repo
-    if transcript:
-        f = last_edited_file(transcript)
-        if f:
-            r = git_toplevel(os.path.dirname(f))
-            if r:
-                return r
-    return None
-
-
-def cmd_resolve(args):
-    r = resolve_repo(args.cwd, args.transcript, args.command)
-    if r:
-        print(r)
-
 
 # --- session engagement: only act on work THIS session produced (not a pre-existing dirty tree) -----
-
-def cur_branch(repo):
-    rc, b, _ = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], repo)
-    return b if rc == 0 else None
 
 
 def work_state(repo):
@@ -711,41 +604,6 @@ def work_state(repo):
     rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
     lines = "\n".join(xy + " " + p for xy, p in visible_changes(repo))
     return (head if rc == 0 else ""), hashlib.sha1(lines.encode()).hexdigest()[:12]
-
-
-def session_path(repo):
-    return os.path.join(git_dir(repo), "swd-session.json")
-
-
-def write_json(path, data):
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
-
-
-SESSION_GC_DAYS = 7
-
-
-def read_sessions(repo):
-    """v1 multi-session map. Anything else — absent, corrupt, or pre-v1 (the one-minor migration
-    window is closed) — reads as empty and is rewritten as v1 on the next write."""
-    try:
-        st = json.load(open(session_path(repo)))
-    except Exception:
-        st = None
-    if isinstance(st, dict) and "v" in st and isinstance(st.get("sessions"), dict):
-        return st
-    return {"v": 1, "sessions": {}}
-
-
-def write_sessions(repo, st):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=SESSION_GC_DAYS)).isoformat()
-    st["sessions"] = {k: v for k, v in st["sessions"].items() if (v.get("started") or cutoff) >= cutoff}
-    try:
-        write_json(session_path(repo), st)
-    except OSError:
-        pass
 
 
 PROVENANCE_CAP = 500
@@ -793,6 +651,18 @@ def cmd_provenance(args):
         write_json(p, st)
     except OSError:
         pass
+
+
+def session_path(repo):
+    return os.path.join(git_dir(repo), "swd-session.json")
+
+
+def read_sessions(repo):
+    return _kernel.read_sessions(session_path(repo))
+
+
+def write_sessions(repo, st):
+    _kernel.write_sessions(session_path(repo), st)
 
 
 def cmd_baseline(args):
