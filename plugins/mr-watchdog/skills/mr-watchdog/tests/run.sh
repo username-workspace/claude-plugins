@@ -207,9 +207,9 @@ echo z > "$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit 
 python3 "$WATCH" baseline --repo "$d" --session SB >/dev/null
 assert_eq "yes" "$(python3 "$WATCH" engaged --repo "$d" --session SA)" "9. SA still engaged after SB baselined"
 assert_eq "no" "$(python3 "$WATCH" engaged --repo "$d" --session SB)" "9. SB (baselined on the pushed tip) → not engaged"
-# legacy single-session file is read as that one session, then upgraded on next write
+# the legacy single-session migration window (one minor) is CLOSED: a pre-v1 file is ignored
 printf '{"session":"OLD","branches":{"feat":{"engaged":true}}}' > "$d/.git/mr-watchdog-session.json"
-assert_eq "yes" "$(python3 "$WATCH" engaged --repo "$d" --session OLD)" "9. legacy single-session file still honoured"
+assert_eq "no" "$(python3 "$WATCH" engaged --repo "$d" --session OLD)" "9. legacy pre-v1 file → ignored (migration window closed)"
 
 # 10. GUARDRAILS: the watcher is read-only — no commit / push / merge anywhere in the source
 grep -Eq "['\"]merge['\"]" "$WATCH" && ko "10. never merges (no merge command)" || ok "10. never merges (no merge command in source)"

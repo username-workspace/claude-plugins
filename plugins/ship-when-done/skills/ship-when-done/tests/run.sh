@@ -8,7 +8,7 @@ GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"
 PASS=0; FAIL=0
 # mark a repo engaged (as if this session produced the work) so the ladder tests run; the engagement
 # DETECTION itself (baseline → work) is exercised separately in test 11b.
-arm(){ printf '{"session":"","branches":{"feat":{"engaged":true}}}' > "$1/.git/swd-session.json"; }
+arm(){ printf '{"v":1,"sessions":{"":{"branches":{"feat":{"engaged":true}}}}}' > "$1/.git/swd-session.json"; }
 
 # --- stub gh on PATH ---
 mkdir -p "$ROOT/bin"
@@ -221,6 +221,11 @@ printf '{"v":1,"sessions":{"STALE":{"started":"2020-01-01T00:00:00+00:00","branc
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session FRESH >/dev/null
 case "$(cat "$d/.git/swd-session.json")" in *STALE*) ko "11i. stale session GC'd on write";; *) ok "11i. stale session GC'd on write";; esac
 case "$(cat "$d/.git/swd-session.json")" in *FRESH*) ok "11i. live session survives the GC";; *) ko "11i. live session survives the GC";; esac
+
+# the legacy single-session migration window (one minor) is CLOSED: a pre-v1 file is ignored
+d="$ROOT/t11L"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+printf '{"session":"OLD","started":"2026-06-11T00:00:00+00:00","branches":{"feat":{"engaged":true}}}' > "$d/.git/swd-session.json"
+assert_eq "no" "$(eng "$d" OLD)" "11L. legacy pre-v1 session file → ignored (migration window closed)"
 
 # 11j. a branch whose recent commits this session merely CHECKED OUT (no file it touched) must
 # NOT engage — provenance, not author dates, decides ownership
