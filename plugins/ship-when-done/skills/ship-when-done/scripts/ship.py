@@ -29,7 +29,7 @@ DEFAULTS = {
 COMMON_TRUNKS = {"main", "master", "develop", "trunk"}
 
 
-def run(cmd, cwd, check=False):
+def run(cmd, cwd, check=False, raw=False):
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     except FileNotFoundError:
@@ -38,7 +38,55 @@ def run(cmd, cwd, check=False):
         return 127, "", f"{cmd[0]}: not found"
     if check and p.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} failed: {p.stderr.strip()}")
-    return p.returncode, p.stdout.strip(), p.stderr.strip()
+    return p.returncode, p.stdout if raw else p.stdout.strip(), p.stderr.strip()
+
+
+def porcelain_status(repo, uall=False):
+    """(xy, path) entries from `git status --porcelain`. The format is positional — a worktree-only
+    change starts with a space, so the raw output must never be stripped before slicing."""
+    cmd = ["git", "status", "--porcelain"] + (["-uall"] if uall else [])
+    _, out, _ = run(cmd, repo, raw=True)
+    return [(l[:2], l[3:].split(" -> ")[-1].strip().strip('"')) for l in out.splitlines() if len(l) > 3]
+
+
+def claims_path(repo):
+    return os.path.join(git_dir(repo), "swd-claims.json")
+
+
+def pid_alive(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def claimed_paths(repo):
+    """Paths a background writer declared still in flight (.git/swd-claims.json, path → pid). A live
+    claim makes the path invisible to ship — a half-written file can never be swept into a commit.
+    A dead writer's claim is void, so a crashed run never leaves a stale lock."""
+    try:
+        claims = json.load(open(claims_path(repo)))
+    except Exception:
+        return set()
+    if not isinstance(claims, dict):
+        return set()
+    return {p for p, pid in claims.items() if pid_alive(pid)}
+
+
+def visible_changes(repo, uall=False):
+    claimed = claimed_paths(repo)
+    return [(xy, p) for xy, p in porcelain_status(repo, uall) if p not in claimed]
 
 
 # gate/judge_command are shell commands: never honored from the (cloneable) working-tree file,
@@ -112,7 +160,6 @@ def git_state(repo):
     remote = remote_name(repo)
     base, confident = default_branch(repo, remote)
     on_default = (not detached) and (branch == base or (not confident and branch in COMMON_TRUNKS))
-    _, porcelain, _ = run(["git", "status", "--porcelain"], repo)
     ahead_of_base = unpushed = 0
     has_upstream = False
     if not detached and not unborn:
@@ -127,7 +174,7 @@ def git_state(repo):
         "branch": branch if not detached else "(detached)",
         "default_branch": base,
         "on_default": on_default,
-        "dirty": bool(porcelain.strip()),
+        "dirty": bool(visible_changes(repo)),
         "has_remote": bool(remote),
         "remote": remote,
         "has_upstream": has_upstream,
@@ -288,9 +335,7 @@ def commit_scope(files):
 def summarize_changes(repo):
     """A concise conventional-commit (type, scope, description) derived from the CHANGED FILES — used
     when there is no done-marker summary, so the subject never falls back to free prose."""
-    _, porcelain, _ = run(["git", "status", "--porcelain", "-uall"], repo)
-    files = [l[3:].split(" -> ")[-1].strip().strip('"') for l in porcelain.splitlines() if l.strip()]
-    files = [f for f in files if f]
+    files = [p for _, p in visible_changes(repo, uall=True) if p]
     if not files:
         return "chore", None, "work in progress"
     low = [f.lower() for f in files]
@@ -385,7 +430,9 @@ def run_ladder(state, verdict, gate, cfg):
             res["blocked"].append("refuse-commit-on-default")
             return res
         msg = build_commit_message(cfg, state, verdict)
-        run(["git", "add", "-A"], repo, check=True)
+        claimed = claimed_paths(repo)
+        add = ["git", "add", "-A"] + (["--", "."] + [f":(exclude,literal){p}" for p in sorted(claimed)] if claimed else [])
+        run(add, repo, check=True)
         run(["git", "commit", "-m", msg], repo, check=True)
         res["commit_message"] = msg
         res["actions"].append("commit")
@@ -646,11 +693,12 @@ def cur_branch(repo):
 
 
 def work_state(repo):
-    """(HEAD sha, hash of the dirty set) — changes the moment this session commits or edits the tree."""
+    """(HEAD sha, hash of the dirty set) — changes the moment this session commits or edits the tree.
+    Claimed paths are excluded, so a background writer never reads as session work."""
     import hashlib
     rc, head, _ = run(["git", "rev-parse", "HEAD"], repo)
-    _, porcelain, _ = run(["git", "status", "--porcelain"], repo)
-    return (head if rc == 0 else ""), hashlib.sha1(porcelain.encode()).hexdigest()[:12]
+    lines = "\n".join(xy + " " + p for xy, p in visible_changes(repo))
+    return (head if rc == 0 else ""), hashlib.sha1(lines.encode()).hexdigest()[:12]
 
 
 def session_path(repo):
@@ -702,23 +750,23 @@ def engaged(repo, cfg, session):
     if not st or st.get("session") != session:
         return False
     entry = st["branches"].get(branch)
-    if not entry:
-        return False
-    if entry.get("engaged"):
-        return True
-    head, dirty = work_state(repo)
-    if head != entry.get("head") or dirty != entry.get("dirty"):
-        entry["engaged"] = True
-        write_session(repo, st)
-        return True
-    # single-turn delivery: a branch baselined only after its work is committed never shows a delta,
-    # but if its commits ahead of base were authored after the session started, they are ours
+    if entry:
+        if entry.get("engaged"):
+            return True
+        head, dirty = work_state(repo)
+        if head != entry.get("head") or dirty != entry.get("dirty"):
+            entry["engaged"] = True
+            write_session(repo, st)
+            return True
+    # single-turn delivery: a branch created mid-turn is baselined late (or not at all before the
+    # Stop fires) and never shows a delta — but commits ahead of base authored after the session
+    # started are ours, entry or no entry
     started = st.get("started")
     if started:
         base, _ = default_branch(repo, remote_name(repo))
         rc, n, _ = run(["git", "rev-list", "--count", f"{base}..HEAD", f"--since={started}"], repo)
         if rc == 0 and n.isdigit() and int(n) > 0:
-            entry["engaged"] = True
+            st["branches"].setdefault(branch, {})["engaged"] = True
             write_session(repo, st)
             return True
     return False
@@ -893,6 +941,39 @@ def cmd_mark_done(args):
     print(f"[ship-when-done] marked done: {data['summary'] or '(no summary)'}")
 
 
+def cmd_claim(args):
+    p = claims_path(args.repo)
+    try:
+        claims = json.load(open(p))
+        if not isinstance(claims, dict):
+            claims = {}
+    except Exception:
+        claims = {}
+    claims[args.path] = args.pid
+    json.dump(claims, open(p, "w"))
+    print(f"[ship-when-done] claimed {args.path} (pid {args.pid})")
+
+
+def cmd_release(args):
+    p = claims_path(args.repo)
+    try:
+        claims = json.load(open(p))
+        if not isinstance(claims, dict):
+            claims = {}
+    except Exception:
+        claims = {}
+    if claims.pop(args.path, None) is None:
+        return
+    if claims:
+        json.dump(claims, open(p, "w"))
+    else:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    print(f"[ship-when-done] released {args.path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="ship-when-done")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -918,6 +999,13 @@ def main():
     rv = sub.add_parser("resolve")
     rv.add_argument("--cwd", default=""); rv.add_argument("--transcript", default=""); rv.add_argument("--command", default="")
     rv.set_defaults(fn=cmd_resolve)
+    cl = sub.add_parser("claim")
+    cl.add_argument("--repo", default="."); cl.add_argument("--path", required=True)
+    cl.add_argument("--pid", type=int, default=os.getppid())
+    cl.set_defaults(fn=cmd_claim)
+    rl = sub.add_parser("release")
+    rl.add_argument("--repo", default="."); rl.add_argument("--path", required=True)
+    rl.set_defaults(fn=cmd_release)
     args = ap.parse_args()
     if getattr(args, "repo", None) is not None:
         args.repo = repo_root(args.repo)
