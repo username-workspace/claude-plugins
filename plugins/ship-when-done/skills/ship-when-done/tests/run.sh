@@ -171,6 +171,22 @@ env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S3 >/dev/nu
 printf '{"enabled":false}' > "$d/.ship-when-done.json"   # this edit would engage, but enabled:false wins
 assert_eq "no" "$(eng "$d" S3)" "11b. enabled:false opts the repo out (even with fresh work)"
 
+# 11e. single-turn delivery: all work committed in one turn on a branch created that turn — the branch
+# is baselined only AFTER the work, so HEAD/tree never move since baseline, yet the ahead-commits were
+# AUTHORED this session → engaged (the blind spot found in real usage). Pre-existing branches (commits
+# older than the session) stay NOT engaged — the safety guard holds.
+d="$ROOT/t11e"; new_repo "$d" --remote
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S1 >/dev/null   # session starts on main
+git -C "$d" checkout -q -b feat-oneturn
+echo x > "$d/a.txt"; git -C "$d" add -A; git -C "$d" commit -qm "ZV-1 done in one turn"
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S1 >/dev/null   # branch first seen already-ahead, clean
+assert_eq "yes" "$(eng "$d" S1)" "11e. one-turn work on a fresh branch (clean tree) → engaged"
+
+d="$ROOT/t11f"; new_repo "$d" --remote; git -C "$d" checkout -q -b preexisting
+env GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00"   git -C "$d" commit -q --allow-empty -m "old work from before this session"
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S2 >/dev/null   # visiting: ahead, but old
+assert_eq "no" "$(eng "$d" S2)" "11e. pre-existing branch (commits predate the session) → NOT engaged"
+
 # 12a. gate auto-detection from package.json (+ lockfile → runner)
 d="$ROOT/t12"; new_repo "$d"
 printf '{"scripts":{"ts:check":"tsc --noEmit","test":"vitest"}}' > "$d/package.json"; touch "$d/pnpm-lock.yaml"

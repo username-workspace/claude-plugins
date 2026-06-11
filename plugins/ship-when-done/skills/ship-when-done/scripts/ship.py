@@ -6,6 +6,7 @@ feature branch; never merge; refuse to act on a detached/unborn HEAD or mid reba
 attribution in commits.
 """
 import argparse, json, os, re, subprocess, sys, time
+from datetime import datetime, timezone
 from shutil import which
 from urllib.parse import quote
 
@@ -671,18 +672,22 @@ def write_session(repo, data):
 
 
 def cmd_baseline(args):
-    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows."""
+    """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows.
+    Also stamps when the session first touched the repo (`started`) — the anchor that tells commits this
+    session authored from work that was already here when we arrived."""
     repo = os.path.abspath(args.repo)
     branch = cur_branch(repo)
     if not branch:
         return
+    now = datetime.now(timezone.utc).isoformat()
     st = read_session(repo)
     if not st or st.get("session") != args.session:
-        st = {"session": args.session, "branches": {}}
+        st = {"session": args.session, "started": now, "branches": {}}
+    st.setdefault("started", now)
     if branch not in st["branches"]:
         head, dirty = work_state(repo)
         st["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
-        write_session(repo, st)
+    write_session(repo, st)
 
 
 def engaged(repo, cfg, session):
@@ -706,6 +711,16 @@ def engaged(repo, cfg, session):
         entry["engaged"] = True
         write_session(repo, st)
         return True
+    # single-turn delivery: a branch baselined only after its work is committed never shows a delta,
+    # but if its commits ahead of base were authored after the session started, they are ours
+    started = st.get("started")
+    if started:
+        base, _ = default_branch(repo, remote_name(repo))
+        rc, n, _ = run(["git", "rev-list", "--count", f"{base}..HEAD", f"--since={started}"], repo)
+        if rc == 0 and n.isdigit() and int(n) > 0:
+            entry["engaged"] = True
+            write_session(repo, st)
+            return True
     return False
 
 
