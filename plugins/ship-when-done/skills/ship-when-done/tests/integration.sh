@@ -8,8 +8,7 @@ PLUGIN="$(cd "$(dirname "$0")/../../.." && pwd)"          # plugins/ship-when-do
 HOOK="$PLUGIN/hooks/stop-hook.py"
 SHIP="$PLUGIN/skills/ship-when-done/scripts/ship.py"
 ROOT="$(mktemp -d)"; GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"; PASS=0; FAIL=0
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 
 mkdir -p "$ROOT/bin"
 cat > "$ROOT/bin/gh" <<EOF

@@ -5,13 +5,8 @@ set -u
 FS="$(cd "$(dirname "$0")/.." && pwd)/scripts/find_session.py"
 ROOT="$(mktemp -d)"
 PROJECTS="$ROOT/projects"
-PASS=0; FAIL=0
 
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
-assert_contains(){ case "$2" in *"$1"*) ok "$3";; *) ko "$3 — expected to contain [$1] in [$2]";; esac; }
-assert_absent(){ case "$2" in *"$1"*) ko "$3 — unexpected [$1]";; *) ok "$3";; esac; }
-assert_eq(){ [ "$1" = "$2" ] && ok "$3" || ko "$3 — expected [$1] got [$2]"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 
 # the script slugs Path.cwd() (symlinks already resolved) — derive the project dir the same way
 slug_of(){ python3 -c "import re; from pathlib import Path; print(re.sub(r'[^a-zA-Z0-9]','-',str(Path.cwd())))"; }

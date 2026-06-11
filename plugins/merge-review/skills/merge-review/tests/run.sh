@@ -6,8 +6,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 RV="$HERE/../scripts/review.py"
 PY="$(command -v python3)"
 ROOT="$(mktemp -d)"; PASS=0; FAIL=0
-ok(){ PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
-ko(){ FAIL=$((FAIL+1)); printf '  \033[31m✗ %s\033[0m\n' "$1"; }
+. "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
 
 # hermetic PATH for `context` (so which(gh/glab) is false → no network)
 mkdir -p "$ROOT/realbin"
