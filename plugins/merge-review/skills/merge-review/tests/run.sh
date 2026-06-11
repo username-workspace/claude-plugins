@@ -31,6 +31,20 @@ case "$ctx" in *'git diff main...HEAD'*) ok "context: diff_cmd against base";; *
 case "$ctx" in *'"threshold": 80'*) ok "context: default threshold 80";; *) ko "context threshold";; esac
 case "$ctx" in *'feat: work'*) ok "context: commits listed";; *) ko "context commits";; esac
 
+# --- 1b. context --packet: self-contained payload for a fresh-context subagent review ------------
+out=$(env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$d" --packet)
+echo "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["diff"] and d["commits"] and "threshold" in d and "rubric" in d and d["truncated"] is False' \
+  && ok "packet: self-contained (diff text + commits + threshold + rubric pointer)" || ko "packet: self-contained (diff text + commits + threshold + rubric pointer)"
+echo "$out" | python3 -c 'import json,sys,os; d=json.load(sys.stdin); assert os.path.isfile(d["rubric"]) and "app.txt" in d["diff"]' \
+  && ok "packet: rubric path exists, diff text is the branch diff" || ko "packet: rubric path exists, diff text is the branch diff"
+case "$out" in *untrusted*) ok "packet: carries the asymmetric trust note";; *) ko "packet: carries the asymmetric trust note";; esac
+# an oversized diff is capped honestly, never silently
+big="$ROOT/big"; mkrepo "$big"; git -C "$big" checkout -q -b feat
+python3 -c "open('$big/blob.txt','w').write('x'*500000)"; git -C "$big" add -A; git -C "$big" commit -qm big
+env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$big" --packet \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["truncated"] is True and len(d["diff"]) <= 400000' \
+  && ok "packet: oversized diff capped with truncated:true" || ko "packet: oversized diff capped with truncated:true"
+
 # --- 2. context: remote (read-only) -------------------------------------------------------------
 ctx=$(env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$d" --mode remote)
 case "$ctx" in *'"mode": "remote"'*) ok "context remote: mode=remote";; *) ko "context remote mode";; esac
@@ -104,6 +118,24 @@ t="$ROOT/thr"; mkrepo "$t"; git -C "$t" checkout -q -b feat; work "$t"; printf '
 case "$("$PY" "$RV" prior --repo "$t")" in *'"passed": false'*) ok "threshold: 85 < custom 90 → not passed";; *) ko "custom threshold";; esac
 case "$(env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$t")" in *'"threshold": 90'*) ok "context: custom threshold surfaced";; *) ko "context custom threshold";; esac
 
+# --- 6c. incremental staleness: a PASSED ancestor head shrinks the obligation, never the gate ----
+inc="$ROOT/inc"; mkrepo "$inc"; git -C "$inc" checkout -q -b feat
+"$PY" "$RV" baseline --repo "$inc" --session s1
+work "$inc"
+"$PY" "$RV" record --repo "$inc" --session s1 --score 90 --passed >/dev/null
+h1=$(git -C "$inc" rev-parse HEAD)
+echo more > "$inc/more.txt"; git -C "$inc" add -A; git -C "$inc" commit -qm more
+case "$(env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$inc")" in
+  *"\"diff_cmd\": \"git diff $h1..HEAD\""*) ok "incremental: ancestor pass → delta diff_cmd";; *) ko "incremental: ancestor pass → delta diff_cmd";; esac
+out=$("$PY" "$RV" gate --repo "$inc" --session s1)
+case "$out" in *'"permissionDecision": "deny"'*) ok "incremental: the gate still denies until a NEW record at HEAD";; *) ko "incremental: the gate still denies until a NEW record at HEAD";; esac
+# the passed head amended away (not an ancestor) → full-diff obligation again
+inc2="$ROOT/inc2"; mkrepo "$inc2"; git -C "$inc2" checkout -q -b feat; work "$inc2"
+"$PY" "$RV" record --repo "$inc2" --session s1 --score 90 --passed >/dev/null
+git -C "$inc2" commit -q --amend -m "amended away"
+case "$(env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$inc2")" in
+  *'"diff_cmd": "git diff main...HEAD"'*) ok "incremental: non-ancestor pass → full diff again";; *) ko "incremental: non-ancestor pass → full diff again";; esac
+
 # --- 6b. SECURITY: gate-evasion knobs are never honored from the cloneable tree file -------------
 sv="$ROOT/sec-knobs"; mkrepo "$sv"; git -C "$sv" checkout -q -b feat
 "$PY" "$RV" baseline --repo "$sv" --session s1; work "$sv"
@@ -118,6 +150,14 @@ sk="$ROOT/sec-skip"; mkrepo "$sk"; git -C "$sk" checkout -q -b feat
 printf '{"skip_marker":""}' > "$sk/.merge-review.json"   # startswith("") matches EVERY branch
 out=$("$PY" "$RV" gate --repo "$sk" --session s1)
 case "$out" in *'"permissionDecision": "deny"'*) ok "6b. tree skip_marker:\"\" ignored (gate still denies)";; *) ko "6b. tree skip_marker bypass [$out]";; esac
+# inline_review weakens review independence → trusted sources only, like every gate knob
+printf '{"inline_review":true}' > "$sk/.merge-review.json"
+ir=$("$PY" -c "import sys; sys.path.insert(0,'$HERE/../scripts'); import review; print(review.load_config('$sk').get('inline_review'))")
+[ "$ir" = "False" ] && ok "6b. tree inline_review:true ignored (fresh-eyes review stays the default)" || ko "6b. tree inline_review:true ignored — got [$ir]"
+printf '{"inline_review":true}' > "$sk/.git/merge-review.json"
+ir=$("$PY" -c "import sys; sys.path.insert(0,'$HERE/../scripts'); import review; print(review.load_config('$sk').get('inline_review'))")
+[ "$ir" = "True" ] && ok "6b. .git/merge-review.json opts into inline review (trusted source)" || ko "6b. .git inline_review opt-in — got [$ir]"
+rm -f "$sk/.git/merge-review.json"
 
 # --- 7. verify (fake-green guard) ---------------------------------------------------------------
 v="$ROOT/verify"; mkrepo "$v"; git -C "$v" checkout -q -b feat
