@@ -727,26 +727,16 @@ def write_json(path, data):
 SESSION_GC_DAYS = 7
 
 
-def migrate_sessions(st):
-    """Legacy single-session shape → the v1 multi-session map. Other top-level keys (a sibling's
-    script pointer) survive the migration."""
-    if "v" in st:
-        return st
-    out = {k: v for k, v in st.items() if k not in ("session", "started", "branches")}
-    out["v"] = 1
-    out["sessions"] = {st.get("session", ""): {"started": st.get("started"),
-                                               "branches": st.get("branches", {})}}
-    return out
-
-
 def read_sessions(repo):
-    """v1 multi-session map. A legacy single-session file is migrated in place on first write,
-    so a session live across the upgrade keeps its baseline."""
+    """v1 multi-session map. Anything else — absent, corrupt, or pre-v1 (the one-minor migration
+    window is closed) — reads as empty and is rewritten as v1 on the next write."""
     try:
         st = json.load(open(session_path(repo)))
     except Exception:
-        return {"v": 1, "sessions": {}}
-    return migrate_sessions(st)
+        st = None
+    if isinstance(st, dict) and "v" in st and isinstance(st.get("sessions"), dict):
+        return st
+    return {"v": 1, "sessions": {}}
 
 
 def write_sessions(repo, st):
@@ -925,9 +915,11 @@ def stamp_sibling(repo, fname, branch, session, entry):
     if not os.path.isfile(p):
         return
     try:
-        st = migrate_sessions(json.load(open(p)))
+        st = json.load(open(p))
     except Exception:
         return
+    if not isinstance(st, dict) or "v" not in st or not isinstance(st.get("sessions"), dict):
+        st = {"v": 1, "sessions": {}}
     sess = st["sessions"].setdefault(session, {"branches": {}})
     sess.setdefault("branches", {})
     sess["branches"][branch] = dict(sess["branches"].get(branch) or {}, **entry)

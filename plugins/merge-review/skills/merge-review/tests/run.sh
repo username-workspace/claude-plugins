@@ -80,9 +80,11 @@ work "$d2"
 "$PY" "$RV" baseline --repo "$d2" --session SB
 [ "$("$PY" "$RV" engaged --repo "$d2" --session SA)" = yes ] && ok "engaged: SA still engaged after SB baselined" || ko "engaged: SA still engaged after SB baselined"
 [ "$("$PY" "$RV" engaged --repo "$d2" --session SB)" = no ] && ok "engaged: SB (baselined on SA's work) → no" || ko "engaged: SB (baselined on SA's work) → no"
-# legacy single-session file is read as that one session, then upgraded on next write
+# the legacy single-session migration window (one minor) is CLOSED: a pre-v1 file is ignored
 printf '{"session":"OLD","started":"2026-06-11T00:00:00+00:00","branches":{"feat":{"engaged":true}}}' > "$d2/.git/merge-review-session.json"
-[ "$("$PY" "$RV" engaged --repo "$d2" --session OLD)" = yes ] && ok "engaged: legacy single-session file still honoured" || ko "engaged: legacy single-session file still honoured"
+[ "$("$PY" "$RV" engaged --repo "$d2" --session OLD)" = no ] && ok "engaged: legacy pre-v1 file → ignored (migration window closed)" || ko "engaged: legacy pre-v1 file → ignored (migration window closed)"
+"$PY" "$RV" baseline --repo "$d2" --session NEW
+case "$(cat "$d2/.git/merge-review-session.json")" in *'"v": 1'*) ok "engaged: next baseline rewrites the file as v1";; *) ko "engaged: next baseline rewrites the file as v1";; esac
 
 # --- 5. pre-push gate ---------------------------------------------------------------------------
 g="$ROOT/gate"; mkrepo "$g"; git -C "$g" checkout -q -b feat
