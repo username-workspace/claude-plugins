@@ -282,4 +282,33 @@ out=$(python3 "$REPO_ROOT/scripts/kernel-sync.py" --check 2>&1) \
   && ok "13. vendored kernel copies in sync with lib/_kernel.py" \
   || ko "13. vendored kernel drifted — $out"
 
+# --- 14. INCIDENT (real usage): a branch created MID-TURN escaped the pre-push gate ------------------
+# The session started on a detached HEAD (worktree pattern) so no baseline was ever stamped; the branch
+# was created and pushed inside one turn → engaged()=false → two PRs pushed unreviewed. The session's
+# work was observable all along in ship-when-done's provenance file: the gate must couple on it.
+d="$ROOT/b14"; new_repo "$d" --remote
+git -C "$d" checkout -q -b feat
+echo gizmo > "$d/g.txt"; echo sp > "$d/café.txt"; git -C "$d" add -A; git -C "$d" commit -qm work
+printf '{"v":1,"sessions":{"s14":{"paths":["g.txt"]},"s-q":{"paths":["café.txt"]}}}' > "$d/.git/swd-provenance.json"
+assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
+  "14. no-baseline branch + swd provenance carried by the branch → gate engaged"
+assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s-q)" \
+  "14. a carried path git C-quotes (non-ASCII) still intersects"
+assert_eq "no" "$(python3 "$REVIEW" engaged --repo "$d" --session s-other)" \
+  "14. another session's provenance does not engage this one"
+d="$ROOT/b14b"; new_repo "$d" --remote
+git -C "$d" checkout -q -b feat
+echo x > "$d/x.txt"; git -C "$d" add -A; git -C "$d" commit -qm work
+assert_eq "no" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
+  "14. absent sibling provenance → inert (a teammate's branch is never gated)"
+printf '{"v":1,"sessions":{"s14":{"paths":["other.txt"]}}}' > "$d/.git/swd-provenance.json"
+assert_eq "no" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
+  "14. disjoint provenance (prov ∩ carried = ∅) does NOT engage — intersection, not mere presence"
+d="$ROOT/b14c"; new_repo "$d" --remote
+git -C "$d" checkout -q -b feat
+echo dirty >> "$d/README.md"
+printf '{"v":1,"sessions":{"s14":{"paths":["README.md"]}}}' > "$d/.git/swd-provenance.json"
+assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
+  "14. worktree-only edit (leading-space porcelain line) is carried evidence too"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]
