@@ -140,6 +140,34 @@ def work(repo, name, ci):
     json.dump(CI_PLANS[ci], open(os.path.join(repo, "ci-plan.json"), "w"))
 
 
+COVERAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage.json")
+
+
+def coverage_read():
+    try:
+        return json.load(open(COVERAGE))
+    except Exception:
+        return {}
+
+
+def coverage_record(label, runid, secs):
+    cov = coverage_read()
+    cov[label] = {"run": runid, "proven": time.strftime("%Y-%m-%d"), "secs": secs}
+    json.dump(dict(sorted(cov.items())), open(COVERAGE, "w"), indent=2)
+
+
+def coverage_report():
+    cov = coverage_read()
+    bare = [f"bare/{f}/{g}/{c}" for f in DIMS["flow"] for g in DIMS["gate"] for c in DIMS["ci"]]
+    twists = [f"twist/{t}" for t in TWISTS]
+    projects = [f"{p}/single-shot/auto/{'red-then-fixed' if p == 'multi' else 'green'}" for p in PROJECTS]
+    print(f"coverage ledger — {len(cov)} situation(s) proven")
+    for space, keys in (("bare", bare), ("projects", projects), ("twists", twists)):
+        missing = [k for k in keys if k not in cov]
+        print(f"  {space}: {len(keys) - len(missing)}/{len(keys)} covered"
+              + (f" — missing: {', '.join(missing)}" if missing else ""))
+
+
 def watch_until_resolved(repo, timeout=420):
     rc, out, err = sh([sys.executable, WATCH, "run", "--repo", repo, "--timeout", str(timeout)],
                       timeout=timeout + 60)
@@ -158,6 +186,9 @@ def pr_state(branch):
 # --- the scenario executor ---------------------------------------------------------------------------
 
 def run_scenario(sc, tag):
+    if sc.get("twist"):
+        TWISTS[sc["twist"]](tag)
+        return "pass"
     workdir = os.path.join(tempfile.mkdtemp(prefix="harness-e2e-"), "repo")
     clone(workdir)
     project = PROJECTS.get(sc.get("project", "bare"))
@@ -232,6 +263,133 @@ def run_scenario(sc, tag):
     return "pass"
 
 
+# --- twists: human behaviour that diverges from the nominal pipeline --------------------------------
+
+def twist_setup(tag, name, ci="green"):
+    workdir = os.path.join(tempfile.mkdtemp(prefix="harness-e2e-"), "repo")
+    clone(workdir)
+    branch = f"e2e/{tag}-twist-{name}"
+    sh(["git", "-C", workdir, "checkout", "-q", "-b", branch], check=True)
+    json.dump({"gate": "true"}, open(os.path.join(workdir, ".git", "ship-when-done.json"), "w"))
+    open(os.path.join(workdir, ".mr-watchdog.json"), "w").write('{"poll_interval": 1}')
+    tp = transcript_for(workdir, f"E2E-2 twist {name} on {branch}")
+    return workdir, branch, f"e2e-{tag}", tp
+
+
+def deliver(workdir, branch, session, tp, ci="green"):
+    """The nominal reviewed delivery, up to the open draft PR."""
+    baselines(workdir, session)
+    work(workdir, "feature", ci)
+    sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary", "twist", "--type", "feat"],
+       check=True)
+    out = stop(workdir, session, tp)
+    expect('"decision": "block"' in out, "delivery must be held for review", out)
+    sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
+    out = stop(workdir, session, tp, active=True)
+    pr = pr_state(branch)
+    expect(pr and pr["state"] == "OPEN", "reviewed delivery must open the draft PR", out)
+    return pr
+
+
+def twist_preexisting_dirty(tag):
+    """The safety guarantee: a tree dirty BEFORE the session is never swept up."""
+    workdir, branch, session, tp = twist_setup(tag, "preexisting-dirty")
+    open(os.path.join(workdir, "precious-wip.txt"), "w").write("someone else's uncommitted work\n")
+    baselines(workdir, session)
+    out = stop(workdir, session, tp)
+    _, n, _ = sh(["git", "-C", workdir, "rev-list", "--count", "HEAD"])
+    expect(n == "1", "pre-existing dirty tree: no commit", out)
+    expect(os.path.isfile(os.path.join(workdir, "precious-wip.txt")), "the dirty file is untouched", out)
+    expect(pr_state(branch) is None, "nothing reached the forge", out)
+
+
+def twist_wip_branch(tag):
+    """The wip/ escape hatch: even completed work on a wip/ branch is left alone."""
+    workdir, _, session, tp = twist_setup(tag, "wip-branch")
+    sh(["git", "-C", workdir, "checkout", "-q", "-b", "wip/spike"], check=True)
+    baselines(workdir, session)
+    work(workdir, "spike", "green")
+    sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary", "spike"], check=True)
+    out = stop(workdir, session, tp)
+    _, n, _ = sh(["git", "-C", workdir, "rev-list", "--count", "HEAD"])
+    expect(n == "1", "wip/ branch: no commit, no ladder", out)
+
+
+def twist_amend_after_push(tag):
+    """HEAD rewritten while the watcher polls: it must stand down, never emit a verdict."""
+    workdir, branch, session, tp = twist_setup(tag, "amend-after-push")
+    deliver(workdir, branch, session, tp, ci="slow-green")
+    proc = subprocess.Popen([sys.executable, WATCH, "run", "--repo", workdir],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    time.sleep(4)
+    sh(["git", "-C", workdir, "commit", "--amend", "-m", "amended by the human"], check=True)
+    out, _ = proc.communicate(timeout=90)
+    expect("branch/HEAD moved" in out, "amended HEAD → the watcher stands down", out)
+    expect("ok, all good" not in out and "ROOT" not in out, "no verdict for a rewritten HEAD", out)
+    pr = pr_state(branch)
+    if pr:
+        sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
+
+
+def twist_mr_closed_mid_watch(tag):
+    """The human closes the MR while the watcher polls: nothing left to watch, clean exit."""
+    workdir, branch, session, tp = twist_setup(tag, "mr-closed-mid-watch")
+    pr = deliver(workdir, branch, session, tp, ci="slow-green")
+    sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO], check=True)
+    rc, out, err = sh([sys.executable, WATCH, "run", "--repo", workdir], timeout=120)
+    expect("no open merge request" in out + err, "closed MR → the watcher stands down", out + err)
+    sh(["gh", "api", "-X", "DELETE", f"repos/{E2E_REPO}/git/refs/heads/{branch}"])
+
+
+def twist_manual_push_midflow(tag):
+    """The impatient human pushes by hand during the review hold: the pipeline still converges."""
+    workdir, branch, session, tp = twist_setup(tag, "manual-push-midflow")
+    baselines(workdir, session)
+    work(workdir, "feature", "green")
+    sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary", "manual"], check=True)
+    out = stop(workdir, session, tp)
+    expect('"decision": "block"' in out, "held for review first", out)
+    sh(["git", "-C", workdir, "push", "-q", "-u", "origin", branch], check=True)
+    sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
+    out = stop(workdir, session, tp, active=True)
+    pr = pr_state(branch)
+    expect(pr and pr["state"] == "OPEN", "manual push absorbed, the PR still opens", out)
+    sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
+
+
+def twist_review_loop(tag):
+    """The review fails first (score under threshold): held without re-block churn, then the fix
+    re-arms one new request, the pass ships it."""
+    workdir, branch, session, tp = twist_setup(tag, "review-loop")
+    baselines(workdir, session)
+    work(workdir, "feature", "green")
+    sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary", "loop"], check=True)
+    out = stop(workdir, session, tp)
+    expect('"decision": "block"' in out, "first stop requests the review", out)
+    sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "40"], check=True)
+    out = stop(workdir, session, tp, active=True)
+    expect('"decision": "block"' not in out, "failed review, unchanged state → no re-block churn", out)
+    expect(pr_state(branch) is None, "still nothing on the forge", out)
+    open(os.path.join(workdir, "feature.txt"), "a").write("finding fixed at the root\n")
+    out = stop(workdir, session, tp, active=True)
+    expect('"decision": "block"' in out, "new work-state → the review is re-requested", out)
+    sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
+    out = stop(workdir, session, tp, active=True)
+    pr = pr_state(branch)
+    expect(pr and pr["state"] == "OPEN", "passing review ships the loop's result", out)
+    sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
+
+
+TWISTS = {
+    "preexisting-dirty": twist_preexisting_dirty,
+    "wip-branch": twist_wip_branch,
+    "amend-after-push": twist_amend_after_push,
+    "mr-closed-mid-watch": twist_mr_closed_mid_watch,
+    "manual-push-midflow": twist_manual_push_midflow,
+    "review-loop": twist_review_loop,
+}
+
+
 # --- the watcher: generate, run, classify, self-heal, hand off ---------------------------------------
 
 def generate(seed, count):
@@ -249,12 +407,14 @@ def generate(seed, count):
 
 
 def file_issue(sc, tag, err):
-    title = f"e2e: persistent failure — {sc['flow']}/{sc['gate']}/{sc['ci']} (seed tag {tag})"
+    what = (f"twist/{sc['twist']}" if sc.get("twist")
+            else f"{sc['flow']}/{sc['gate']}/{sc['ci']}")
+    title = f"e2e: persistent failure — {what} (seed tag {tag})"
     body = (f"The E2E lane failed twice on the same generated scenario.\n\n"
             f"**Scenario**: `{json.dumps(sc)}`  ·  **tag**: `{tag}`\n"
             f"**Reproduce**: `python3 tests/e2e/e2e.py --scenario "
-            f"{sc['flow']}:{sc['gate']}:{sc['ci']}"
-            + (f":{sc['project']}" if sc.get("project") else "")
+            + (f"twist:{sc['twist']}" if sc.get("twist") else
+               f"{sc['flow']}:{sc['gate']}:{sc['ci']}" + (f":{sc['project']}" if sc.get("project") else ""))
             + f"`\n\n```\n{str(err)[-4000:]}\n```")
     rc, _, _ = sh(["gh", "issue", "create", "--repo", ISSUE_REPO, "--title", title, "--body", body,
                    "--label", "e2e"])
@@ -267,16 +427,27 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--count", type=int, default=2)
     ap.add_argument("--repo", default=E2E_REPO)
-    ap.add_argument("--scenario", help="one-off flow:gate:ci[:project] instead of the generated set")
+    ap.add_argument("--scenario", help="one-off flow:gate:ci[:project] or twist:<name>")
     ap.add_argument("--projects", action="store_true",
                     help="full-integration suite over the project archetypes (auto-detected gates)")
+    ap.add_argument("--twists", action="store_true",
+                    help="human-divergence situations (dirty start, amend, manual push, review loop…)")
+    ap.add_argument("--coverage", action="store_true", help="print the proven-situations ledger")
     args = ap.parse_args()
     globals()["E2E_REPO"] = args.repo
 
+    if args.coverage:
+        coverage_report()
+        return
     if args.scenario:
         parts = args.scenario.split(":")
-        scenarios = [{"flow": parts[0], "gate": parts[1], "ci": parts[2],
-                      **({"project": parts[3]} if len(parts) > 3 else {})}]
+        if parts[0] == "twist":
+            scenarios = [{"twist": parts[1]}]
+        else:
+            scenarios = [{"flow": parts[0], "gate": parts[1], "ci": parts[2],
+                          **({"project": parts[3]} if len(parts) > 3 else {})}]
+    elif args.twists:
+        scenarios = [{"twist": t} for t in TWISTS]
     elif args.projects:
         scenarios = [{"flow": "single-shot", "gate": "auto",
                       "ci": "red-then-fixed" if p == "multi" else "green", "project": p}
@@ -290,11 +461,13 @@ def main():
     failures = 0
     for i, sc in enumerate(scenarios):
         tag = f"s{args.seed}n{i}r{runid}"
-        label = f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}"
+        label = (f"twist/{sc['twist']}" if sc.get("twist")
+                 else f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}")
         t0 = time.time()
         for attempt in (1, 2):
             try:
                 run_scenario(sc, f"{tag}a{attempt}")
+                coverage_record(label, runid, round(time.time() - t0))
                 print(f"  ✓ {label}  ({round(time.time() - t0)}s"
                       + (", flaky: passed on retry)" if attempt == 2 else ")"))
                 break
