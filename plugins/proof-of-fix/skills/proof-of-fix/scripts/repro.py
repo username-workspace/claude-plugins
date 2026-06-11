@@ -11,6 +11,9 @@ work-state on red (capped, never an infinite Stop loop). Opt a repo out with ena
 .proof-of-fix.json.
 """
 import argparse, json, os, re, subprocess, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _kernel
+from _kernel import git_dir, repo_root, run, write_json
 
 INTENT_RE = re.compile(
     r"\b(bugs?|broken|regressions?|r[ée]gressions?|crash(es|ed)?|plante|fix(e[rz]?|es|ed|ing)?|"
@@ -28,39 +31,11 @@ MAX_NAGS = 5
 CMD_TIMEOUT = 120
 
 
-def run(cmd, cwd, timeout=None):
-    try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError:
-        return 127, "", f"{cmd[0]}: not found"
-    except subprocess.TimeoutExpired:
-        return 124, "", "timed out"
-    return p.returncode, p.stdout.strip(), p.stderr.strip()
-
-
 def load_config(repo):
     try:
         return json.load(open(os.path.join(repo, ".proof-of-fix.json")))
     except Exception:
         return {}
-
-
-def git_dir(repo):
-    rc, gd, _ = run(["git", "rev-parse", "--git-dir"], repo)
-    gd = gd if (rc == 0 and gd) else ".git"
-    return gd if os.path.isabs(gd) else os.path.join(repo, gd)
-
-
-def git_toplevel(path):
-    if not path:
-        return None
-    rc, top, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], ".")
-    return top if rc == 0 and top else None
-
-
-def repo_root(path):
-    ap = os.path.abspath(path or ".")
-    return git_toplevel(ap) or ap
 
 
 def work_state(repo):
@@ -77,25 +52,12 @@ def state_path(repo):
     return os.path.join(git_dir(repo), "proof-of-fix.json")
 
 
-def write_json(path, data):
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
-
-
 def read_state(repo):
-    try:
-        return json.load(open(state_path(repo)))
-    except Exception:
-        return None
+    return _kernel.read_state(state_path(repo))
 
 
 def write_state(repo, data):
-    try:
-        write_json(state_path(repo), data)
-    except OSError:
-        pass
+    _kernel.write_state(state_path(repo), data)
 
 
 def run_probe(repo, cmd):

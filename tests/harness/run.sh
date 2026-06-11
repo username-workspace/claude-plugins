@@ -282,4 +282,9 @@ assert_eq "a
 b
 h" "$(sort "$RUNLOG")" "12. --impacted: git status failure → FULL, never a silent under-selection"
 
+# 13. the vendored kernel cannot silently diverge from lib/_kernel.py (the lockstep-patch incident class)
+out=$(python3 "$REPO_ROOT/scripts/kernel-sync.py" --check 2>&1) \
+  && ok "13. vendored kernel copies in sync with lib/_kernel.py" \
+  || ko "13. vendored kernel drifted — $out"
+
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]
