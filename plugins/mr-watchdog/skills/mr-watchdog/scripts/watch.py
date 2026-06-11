@@ -10,6 +10,7 @@ Read-only: it never commits, pushes, or merges, and runs no model itself. Opt a 
 enabled:false.
 """
 import argparse, json, os, re, subprocess, sys, time
+from datetime import datetime, timedelta, timezone
 from shutil import which
 
 DEFAULTS = {
@@ -344,16 +345,43 @@ def session_path(repo):
     return os.path.join(git_dir(repo), "mr-watchdog-session.json")
 
 
-def read_session(repo):
+def write_json(path, data):
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+SESSION_GC_DAYS = 7
+
+
+def migrate_sessions(st):
+    """Legacy single-session shape → the v1 multi-session map. Other top-level keys (the script
+    pointer ship-when-done calls back through) survive the migration."""
+    if "v" in st:
+        return st
+    out = {k: v for k, v in st.items() if k not in ("session", "started", "branches")}
+    out["v"] = 1
+    out["sessions"] = {st.get("session", ""): {"started": st.get("started"),
+                                               "branches": st.get("branches", {})}}
+    return out
+
+
+def read_sessions(repo):
+    """v1 multi-session map. A legacy single-session file is migrated in place on first write,
+    so a session live across the upgrade keeps its baseline."""
     try:
-        return json.load(open(session_path(repo)))
+        st = json.load(open(session_path(repo)))
     except Exception:
-        return None
+        return {"v": 1, "sessions": {}}
+    return migrate_sessions(st)
 
 
-def write_session(repo, data):
+def write_sessions(repo, st):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=SESSION_GC_DAYS)).isoformat()
+    st["sessions"] = {k: v for k, v in st["sessions"].items() if (v.get("started") or cutoff) >= cutoff}
     try:
-        json.dump(data, open(session_path(repo), "w"))
+        write_json(session_path(repo), st)
     except OSError:
         pass
 
@@ -367,14 +395,16 @@ def cmd_baseline(args):
     cfg = load_config(repo, args.config)
     if not cfg.get("enabled", True) or not current_branch(repo) or not remote_name(repo):
         return
-    st = read_session(repo)
-    if not st or st.get("session") != args.session:
-        st = {"session": args.session, "branches": {}}
+    now = datetime.now(timezone.utc).isoformat()
+    st = read_sessions(repo)
     st["script"] = os.path.abspath(__file__)
+    sess = st["sessions"].setdefault(args.session, {"started": now, "branches": {}})
+    sess["started"] = sess.get("started") or now
+    sess.setdefault("branches", {})
     branch = feature_branch(repo, cfg)
-    if branch and branch not in st["branches"]:
-        st["branches"][branch] = {"base": upstream_sha(repo), "engaged": False}
-    write_session(repo, st)
+    if branch and branch not in sess["branches"]:
+        sess["branches"][branch] = {"base": upstream_sha(repo), "engaged": False}
+    write_sessions(repo, st)
 
 
 def engaged(repo, cfg, session):
@@ -385,17 +415,18 @@ def engaged(repo, cfg, session):
     branch = feature_branch(repo, cfg)
     if not branch:
         return False
-    st = read_session(repo)
-    if not st or st.get("session") != session:
+    st = read_sessions(repo)
+    sess = st["sessions"].get(session)
+    if not sess:
         return False
-    entry = st["branches"].get(branch)
+    entry = sess.get("branches", {}).get(branch)
     if not entry:
         return False
     if entry.get("engaged"):
         return True
     if upstream_sha(repo) != (entry.get("base") or ""):
         entry["engaged"] = True
-        write_session(repo, st)
+        write_sessions(repo, st)
         return True
     return False
 
@@ -604,7 +635,7 @@ def watch_requested(repo, head):
 
 def mark_watch_requested(repo, head):
     try:
-        json.dump({"head": head}, open(watch_marker_path(repo), "w"))
+        write_json(watch_marker_path(repo), {"head": head})
     except OSError:
         pass
 

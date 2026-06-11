@@ -59,6 +59,16 @@ rm -f "$d/.git/merge-review.json"
 db="$ROOT/eng-main"; mkrepo "$db"
 "$PY" "$RV" baseline --repo "$db" --session s1; echo x >> "$db/app.txt"; git -C "$db" add -A; git -C "$db" commit -qm x
 [ "$("$PY" "$RV" engaged --repo "$db" --session s1)" = no ] && ok "engaged: on default branch → no" || ko "engaged default→no"
+# two concurrent sessions: the second baseliner must not erase the first session's engagement
+d2="$ROOT/eng2"; mkrepo "$d2"; git -C "$d2" checkout -q -b feat
+"$PY" "$RV" baseline --repo "$d2" --session SA
+work "$d2"
+"$PY" "$RV" baseline --repo "$d2" --session SB
+[ "$("$PY" "$RV" engaged --repo "$d2" --session SA)" = yes ] && ok "engaged: SA still engaged after SB baselined" || ko "engaged: SA still engaged after SB baselined"
+[ "$("$PY" "$RV" engaged --repo "$d2" --session SB)" = no ] && ok "engaged: SB (baselined on SA's work) → no" || ko "engaged: SB (baselined on SA's work) → no"
+# legacy single-session file is read as that one session, then upgraded on next write
+printf '{"session":"OLD","started":"2026-06-11T00:00:00+00:00","branches":{"feat":{"engaged":true}}}' > "$d2/.git/merge-review-session.json"
+[ "$("$PY" "$RV" engaged --repo "$d2" --session OLD)" = yes ] && ok "engaged: legacy single-session file still honoured" || ko "engaged: legacy single-session file still honoured"
 
 # --- 5. pre-push gate ---------------------------------------------------------------------------
 g="$ROOT/gate"; mkrepo "$g"; git -C "$g" checkout -q -b feat
