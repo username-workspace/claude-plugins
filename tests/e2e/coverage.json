@@ -205,42 +205,42 @@
     "secs": 45
   },
   "twist/amend-after-push": {
-    "run": "c37c4",
+    "run": "c4320",
     "proven": "2026-06-11",
-    "secs": 23
+    "secs": 22
   },
   "twist/bg-writer": {
-    "run": "c37c4",
+    "run": "c4320",
     "proven": "2026-06-11",
     "secs": 18
   },
   "twist/manual-push-midflow": {
-    "run": "c37c4",
+    "run": "c4320",
+    "proven": "2026-06-11",
+    "secs": 17
+  },
+  "twist/mr-closed-mid-watch": {
+    "run": "c4320",
     "proven": "2026-06-11",
     "secs": 19
   },
-  "twist/mr-closed-mid-watch": {
-    "run": "c37c4",
-    "proven": "2026-06-11",
-    "secs": 18
-  },
   "twist/preexisting-dirty": {
-    "run": "c37c4",
+    "run": "c4320",
     "proven": "2026-06-11",
     "secs": 3
   },
   "twist/review-loop": {
-    "run": "c37c4",
+    "run": "c4320",
     "proven": "2026-06-11",
     "secs": 19
   },
   "twist/two-sessions": {
-    "run": "c37c4",
+    "run": "c4320",
     "proven": "2026-06-11",
     "secs": 19
   },
   "twist/wip-branch": {
-    "run": "c37c4",
+    "run": "c4320",
     "proven": "2026-06-11",
     "secs": 3
   }
