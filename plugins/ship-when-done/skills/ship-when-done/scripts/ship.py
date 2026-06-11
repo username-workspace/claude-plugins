@@ -11,7 +11,8 @@ from shutil import which
 from urllib.parse import quote
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _kernel
-from _kernel import cmd_resolve, cur_branch, git_dir, git_toplevel, remote_name, repo_root, run, write_json
+from _kernel import (carried_paths, cmd_resolve, cur_branch, git_dir, git_toplevel, provenance_path,
+                     provenance_paths, remote_name, repo_root, run, write_json)
 
 DEFAULTS = {
     "on_done": "draft-pr",            # draft-pr | ready-pr | suggest
@@ -610,18 +611,6 @@ PROVENANCE_CAP = 500
 PROVENANCE_SESSIONS = 20
 
 
-def provenance_path(repo):
-    return os.path.join(git_dir(repo), "swd-provenance.json")
-
-
-def provenance_paths(repo, sid):
-    try:
-        st = json.load(open(provenance_path(repo)))
-    except Exception:
-        return set()
-    return set((st.get("sessions", {}).get(sid) or {}).get("paths", []))
-
-
 def cmd_provenance(args):
     """PostToolUse(Edit|Write|NotebookEdit): record the edited file's repo-relative path as work
     OBSERVED from this session — never inferred. The repo is the edited file's own, so a submodule
@@ -694,9 +683,7 @@ def engaged(repo, cfg, session):
         return False
     st = read_sessions(repo)
     sess = st["sessions"].get(session)
-    if not sess:
-        return False
-    entry = sess.get("branches", {}).get(branch)
+    entry = (sess or {}).get("branches", {}).get(branch)
     if entry:
         if entry.get("engaged"):
             return True
@@ -706,17 +693,15 @@ def engaged(repo, cfg, session):
             write_sessions(repo, st)
             return True
     # provenance: the branch carries a path this session OBSERVABLY edited (PostToolUse events) —
-    # claims a branch created mid-turn that has no baseline entry; a checked-out teammate branch
-    # carries none of our paths and stays silent
+    # claims a branch created mid-turn (no baseline entry) even when the session itself has no entry
+    # yet (detached-HEAD start); a checked-out teammate branch carries none of our paths, stays silent
     prov = provenance_paths(repo, session)
-    if prov:
-        base, _ = default_branch(repo, remote_name(repo))
-        _, names, _ = run(["git", "diff", "--name-only", f"{base}...HEAD"], repo)
-        carried = set(names.splitlines()) | {p for _, p in porcelain_status(repo)}
-        if prov & carried:
-            sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
-            write_sessions(repo, st)
-            return True
+    if prov and prov & carried_paths(repo):
+        sess = st["sessions"].setdefault(session, {"started": datetime.now(timezone.utc).isoformat(),
+                                                   "branches": {}})
+        sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
+        write_sessions(repo, st)
+        return True
     return False
 
 

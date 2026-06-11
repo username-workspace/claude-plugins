@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from shutil import which
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _kernel
-from _kernel import (cmd_resolve, cur_branch, default_branch, detect_forge, fake_green, git_dir, head_sha,
-                     remote_name, repo_root, run, write_json)
+from _kernel import (carried_paths, cmd_resolve, cur_branch, default_branch, detect_forge, fake_green,
+                     git_dir, head_sha, provenance_paths, remote_name, repo_root, run, write_json)
 
 DEFAULTS = {
     "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
@@ -106,31 +106,6 @@ def cmd_baseline(args):
         head, dirty = work_state(repo)
         sess["branches"][branch] = {"head": head, "dirty": dirty, "engaged": False}
     write_sessions(repo, st)
-
-
-def provenance_paths(repo, sid):
-    try:
-        st = json.load(open(os.path.join(git_dir(repo), "swd-provenance.json")))
-    except Exception:
-        return set()
-    return set((st.get("sessions", {}).get(sid) or {}).get("paths", []))
-
-
-def carried_paths(repo):
-    """NUL-delimited feeds (-z, raw): C-quoting would break the verbatim intersection with provenance
-    paths, and stripping would eat a worktree-only entry's leading space. In porcelain -z a rename's
-    original path is a bare extra token — skipped."""
-    _, names, _ = run(["git", "diff", "--name-only", "-z",
-                       f"{default_branch(repo, remote_name(repo))}...HEAD"], repo, raw=True)
-    paths = set(filter(None, names.split("\0")))
-    _, porcelain, _ = run(["git", "status", "--porcelain", "-z"], repo, raw=True)
-    toks = iter(porcelain.split("\0"))
-    for t in toks:
-        if len(t) > 3 and t[2] == " ":
-            paths.add(t[3:])
-            if t[0] in "RC":
-                next(toks, None)
-    return paths
 
 
 def engaged(repo, cfg, session):

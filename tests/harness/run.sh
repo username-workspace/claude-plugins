@@ -304,11 +304,17 @@ assert_eq "no" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
 printf '{"v":1,"sessions":{"s14":{"paths":["other.txt"]}}}' > "$d/.git/swd-provenance.json"
 assert_eq "no" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
   "14. disjoint provenance (prov ∩ carried = ∅) does NOT engage — intersection, not mere presence"
+printf 'null' > "$d/.git/swd-provenance.json"
+assert_eq "no" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
+  "14. wrong-shape provenance (valid JSON, wrong schema) → inert, never a crash"
 d="$ROOT/b14c"; new_repo "$d" --remote
 git -C "$d" checkout -q -b feat
 echo dirty >> "$d/README.md"
-printf '{"v":1,"sessions":{"s14":{"paths":["README.md"]}}}' > "$d/.git/swd-provenance.json"
+echo new > "$d/café-dirty.txt"
+printf '{"v":1,"sessions":{"s14":{"paths":["README.md"]},"s-qd":{"paths":["café-dirty.txt"]}}}' > "$d/.git/swd-provenance.json"
 assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
   "14. worktree-only edit (leading-space porcelain line) is carried evidence too"
+assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s-qd)" \
+  "14. untracked non-ASCII path (porcelain C-quotes it) is carried evidence too"
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]
