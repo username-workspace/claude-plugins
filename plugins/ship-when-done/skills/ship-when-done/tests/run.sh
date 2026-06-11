@@ -611,6 +611,35 @@ before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" engage --repo "$d" --goal "ZV-5 y" >/dev/null 2>&1            # turn 2: review passed → ship
 [ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "37. marker followed the branch-first move → PR on the derived branch" || ko "37. marker followed the branch-first move → PR on the derived branch"
 
+# 38. INCIDENT: the review-nudge budget never reset — after 5 SHIPPED delivery loops in one session,
+# the 6th held push got no nudge (silently starved). A successful push = the loop converged: it must
+# hand the budget back. The anti-loop cap on an UNCONVERGED loop stays intact (38b).
+d="$ROOT/t38"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
+printf '{"session":"","branches":{}}' > "$d/.git/merge-review-session.json"
+for i in 1 2 3 4 5; do
+  echo "w$i" > "$d/f$i.txt"
+  out=$(python3 "$SHIP" engage --repo "$d" --goal x 2>&1)
+  case "$out" in *'"decision": "block"'*) :;; *) ko "38. loop $i: expected a review block";; esac
+  H=$(git -C "$d" rev-parse HEAD)
+  printf '{"head":"%s","passed":true}' "$H" > "$d/.git/merge-review-state.json"
+  python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
+done
+echo w6 > "$d/f6.txt"
+out=$(python3 "$SHIP" engage --repo "$d" --goal x 2>&1)
+assert_contains '"decision": "block"' "$out" "38. sixth delivery after five SHIPPED loops still gets the review nudge"
+# 38b. the anti-loop guarantee is untouched: an unconverged loop (no successful push) stays bounded
+d="$ROOT/t38b"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat; arm "$d"
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
+printf '{"session":"","branches":{}}' > "$d/.git/merge-review-session.json"
+n=0
+for i in 1 2 3 4 5 6; do
+  echo "$i" >> "$d/g.txt"
+  out=$(python3 "$SHIP" engage --repo "$d" --goal x 2>&1)
+  case "$out" in *'"decision": "block"'*) n=$((n+1));; esac
+done
+assert_eq 5 "$n" "38b. unconverged review loop stays capped at 5 nudges (never a Stop loop)"
+
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
 
