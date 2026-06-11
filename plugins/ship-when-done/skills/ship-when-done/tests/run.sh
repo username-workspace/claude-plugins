@@ -157,6 +157,9 @@ assert_eq "$before" "$(count "$d2" HEAD)" "11. not engaged (no session ownership
 
 # 11b. engagement: only work THIS session produced engages (a pre-existing dirty tree does NOT)
 eng(){ env -u SHIP_WHEN_DONE python3 "$SHIP" engaged --repo "$1" --session "$2"; }
+SWD_PLUGIN="$(cd "$(dirname "$0")/../../.." && pwd)"
+posttool(){ printf '{"session_id":"%s","tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1" "$2" \
+  | CLAUDE_PLUGIN_ROOT="$SWD_PLUGIN" python3 "$SWD_PLUGIN/hooks/posttool-hook.py"; }
 d="$ROOT/t11c"; new_repo "$d"; git -C "$d" checkout -q -b feat
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S >/dev/null
 assert_eq "no" "$(eng "$d" S)" "11b. clean baseline, no work yet → not engaged"
@@ -172,15 +175,17 @@ printf '{"enabled":false}' > "$d/.ship-when-done.json"   # this edit would engag
 assert_eq "no" "$(eng "$d" S3)" "11b. enabled:false opts the repo out (even with fresh work)"
 
 # 11e. single-turn delivery: all work committed in one turn on a branch created that turn — the branch
-# is baselined only AFTER the work, so HEAD/tree never move since baseline, yet the ahead-commits were
-# AUTHORED this session → engaged (the blind spot found in real usage). Pre-existing branches (commits
-# older than the session) stay NOT engaged — the safety guard holds.
+# is baselined only AFTER the work, so HEAD/tree never move since baseline, yet the work carries paths
+# this session OBSERVABLY edited (PostToolUse provenance) → engaged (the blind spot found in real
+# usage). Pre-existing branches (zero provenance) stay NOT engaged — the safety guard holds.
 d="$ROOT/t11e"; new_repo "$d" --remote
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S1 >/dev/null   # session starts on main
 git -C "$d" checkout -q -b feat-oneturn
-echo x > "$d/a.txt"; git -C "$d" add -A; git -C "$d" commit -qm "ZV-1 done in one turn"
+echo x > "$d/a.txt"; posttool S1 "$d/a.txt"                                          # the edit event fires
+case "$(cat "$d/.git/swd-provenance.json" 2>/dev/null)" in *'"a.txt"'*) ok "11e. posttool hook recorded the repo-relative path";; *) ko "11e. posttool hook recorded the repo-relative path";; esac
+git -C "$d" add -A; git -C "$d" commit -qm "ZV-1 done in one turn"
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S1 >/dev/null   # branch first seen already-ahead, clean
-assert_eq "yes" "$(eng "$d" S1)" "11e. one-turn work on a fresh branch (clean tree) → engaged"
+assert_eq "yes" "$(eng "$d" S1)" "11e. one-turn work on a fresh branch (clean tree) → engaged via provenance"
 
 d="$ROOT/t11f"; new_repo "$d" --remote; git -C "$d" checkout -q -b preexisting
 env GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00"   git -C "$d" commit -q --allow-empty -m "old work from before this session"
@@ -188,12 +193,13 @@ env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S2 >/dev/nu
 assert_eq "no" "$(eng "$d" S2)" "11e. pre-existing branch (commits predate the session) → NOT engaged"
 
 # 11g. INCIDENT: branch created + committed manually MID-turn — the Stop fires before the branch has
-# any baseline entry, and the session-start anchor must claim it anyway (pre-session commits must not)
+# any baseline entry; provenance (paths this session edited) claims it (pre-session work must not)
 d="$ROOT/t11g"; new_repo "$d" --remote
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S4 >/dev/null   # session starts on main
 git -C "$d" checkout -q -b feat-midturn
-echo x > "$d/a.txt"; git -C "$d" add -A; git -C "$d" commit -qm "authored this session"
-assert_eq "yes" "$(eng "$d" S4)" "11g. unbaselined mid-turn branch, session-authored commits → engaged"
+echo x > "$d/a.txt"; posttool S4 "$d/a.txt"
+git -C "$d" add -A; git -C "$d" commit -qm "authored this session"
+assert_eq "yes" "$(eng "$d" S4)" "11g. unbaselined mid-turn branch, session-edited paths → engaged"
 d="$ROOT/t11h"; new_repo "$d" --remote
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S5 >/dev/null
 git -C "$d" checkout -q -b preexisting-nobaseline
@@ -215,6 +221,21 @@ printf '{"v":1,"sessions":{"STALE":{"started":"2020-01-01T00:00:00+00:00","branc
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session FRESH >/dev/null
 case "$(cat "$d/.git/swd-session.json")" in *STALE*) ko "11i. stale session GC'd on write";; *) ok "11i. stale session GC'd on write";; esac
 case "$(cat "$d/.git/swd-session.json")" in *FRESH*) ok "11i. live session survives the GC";; *) ko "11i. live session survives the GC";; esac
+
+# 11j. a branch whose recent commits this session merely CHECKED OUT (no file it touched) must
+# NOT engage — provenance, not author dates, decides ownership
+d="$ROOT/t11j"; new_repo "$d" --remote
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S6 >/dev/null
+git -C "$d" checkout -q -b teammate
+echo t > "$d/their.txt"; git -C "$d" add -A; git -C "$d" commit -qm "teammate work, authored now"
+assert_eq "no" "$(eng "$d" S6)" "11j. fresh-authored teammate branch, zero session provenance → NOT engaged"
+# 11k. the mid-turn branch DOES engage via provenance (no baseline, no author-date rule)
+d="$ROOT/t11k"; new_repo "$d" --remote
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S7 >/dev/null
+git -C "$d" checkout -q -b feat-midturn
+echo x > "$d/mine.txt"; git -C "$d" add -A; git -C "$d" commit -qm work
+printf '{"v":1,"sessions":{"S7":{"paths":["mine.txt"]}}}' > "$d/.git/swd-provenance.json"
+assert_eq "yes" "$(eng "$d" S7)" "11k. branch carrying session-touched paths → engaged (provenance)"
 
 # 12a. gate auto-detection from package.json (+ lockfile → runner)
 d="$ROOT/t12"; new_repo "$d"
@@ -553,6 +574,37 @@ python3 "$SHIP" claim --repo "$d" --path tests/e2e/coverage.json --pid "$$" >/de
 case "$(cat "$d/.git/swd-claims.json" 2>/dev/null)" in *coverage.json*) ok "36d. claim writes the protocol file";; *) ko "36d. claim writes the protocol file";; esac
 python3 "$SHIP" release --repo "$d" --path tests/e2e/coverage.json >/dev/null 2>&1
 case "$(cat "$d/.git/swd-claims.json" 2>/dev/null)" in *coverage.json*) ko "36d. release drops the claim";; *) ok "36d. release drops the claim";; esac
+
+# 37. the done-marker is branch-scoped: done on feat-a must never ship feat-b (two-branch ambiguity)
+d="$ROOT/t37"; new_repo "$d" --remote
+git -C "$d" checkout -q -b feat-a
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
+python3 "$SHIP" mark-done --repo "$d" --summary "a done" >/dev/null
+git -C "$d" checkout -q -b feat-b
+echo x > "$d/b.txt"
+printf '{"v":1,"sessions":{"":{"branches":{"feat-b":{"engaged":true}}}}}' > "$d/.git/swd-session.json"
+before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
+assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "37. feat-a marker does NOT open a PR for feat-b"
+[ -f "$d/.git/swd-done.json" ] && ok "37. marker kept for feat-a" || ko "37. marker kept for feat-a"
+# a todos-driven PR for feat-b must NOT consume feat-a's marker (only the marker that drove a PR is)
+python3 "$SHIP" engage --repo "$d" --goal x --todos-done >/dev/null 2>&1
+[ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "37. todos-done still ships feat-b" || ko "37. todos-done still ships feat-b"
+[ -f "$d/.git/swd-done.json" ] && ok "37. feat-a marker survives the todos-driven PR" || ko "37. feat-a marker survives the todos-driven PR"
+# branch-first move: a marker stamped on the trunk follows the work onto the derived branch — the
+# re-entrant turn (after the review pass) must still read 'done' once the ladder moved off main
+d="$ROOT/t37b"; new_repo "$d" --remote
+printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
+printf '{"v":1,"sessions":{"":{"branches":{"main":{"engaged":true}}}}}' > "$d/.git/swd-session.json"
+printf '{"session":"","branches":{}}' > "$d/.git/merge-review-session.json"
+echo y > "$d/y.txt"
+python3 "$SHIP" mark-done --repo "$d" --summary "trunk single-shot" >/dev/null
+python3 "$SHIP" engage --repo "$d" --goal "ZV-5 y" >/dev/null 2>&1            # turn 1: branch-first, push held
+H=$(git -C "$d" rev-parse HEAD)
+printf '{"head":"%s","passed":true}' "$H" > "$d/.git/merge-review-state.json"
+before=$(grep -c 'pr create' "$GH_LOG")
+python3 "$SHIP" engage --repo "$d" --goal "ZV-5 y" >/dev/null 2>&1            # turn 2: review passed → ship
+[ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "37. marker followed the branch-first move → PR on the derived branch" || ko "37. marker followed the branch-first move → PR on the derived branch"
 
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"

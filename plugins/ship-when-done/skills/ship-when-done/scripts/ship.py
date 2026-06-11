@@ -420,6 +420,7 @@ def run_ladder(state, verdict, gate, cfg):
     if state["on_default"] and state["dirty"]:
         branch = derive_branch_name(cfg, state)
         run(["git", "checkout", "-b", branch], repo, check=True)
+        rebind_marker(repo, state["branch"], branch)
         state = dict(state, branch=branch, on_default=False)
         has_up = False
         res["branch"] = branch
@@ -546,6 +547,15 @@ def clear_marker(repo):
         pass
 
 
+def rebind_marker(repo, old, new):
+    """Branch-first moved the work off the trunk: the marker rides along — it describes the work,
+    not the ref it was stamped on."""
+    m = read_marker(repo)
+    if m and m.get("branch") == old:
+        m["branch"] = new
+        write_json(marker_path(repo), m)
+
+
 def surface_url_once(repo, branch):
     """Surface a forge URL at most once per branch tip — dedups so a 'done' PR is shown when the tip
     advances but never re-nagged on idle turns. Stamp lives in .git (never committed)."""
@@ -570,6 +580,8 @@ def evaluate_completion(state, gate, cfg, last_message="", todos_done=False):
     gate and no fresh TODO/FIXME. When unsure → not done."""
     repo = state["repo"]
     marker = read_marker(repo)
+    if marker and marker.get("branch") and marker["branch"] != state.get("branch"):
+        marker = None                              # another branch's 'done' — ignored, kept for its own
     _, diff, _ = run(["git", "diff", "HEAD"], repo)
     new_todos = len(re.findall(r"^\+.*\b(TODO|FIXME|XXX)\b", diff, re.M))
     done = (bool(marker) or todos_done) and gate == "pass" and new_todos == 0
@@ -746,10 +758,56 @@ def write_sessions(repo, st):
         pass
 
 
+PROVENANCE_CAP = 500
+PROVENANCE_SESSIONS = 20
+
+
+def provenance_path(repo):
+    return os.path.join(git_dir(repo), "swd-provenance.json")
+
+
+def provenance_paths(repo, sid):
+    try:
+        st = json.load(open(provenance_path(repo)))
+    except Exception:
+        return set()
+    return set((st.get("sessions", {}).get(sid) or {}).get("paths", []))
+
+
+def cmd_provenance(args):
+    """PostToolUse(Edit|Write|NotebookEdit): record the edited file's repo-relative path as work
+    OBSERVED from this session — never inferred. The repo is the edited file's own, so a submodule
+    edit lands in the submodule's .git."""
+    fp = os.path.realpath(args.file)                  # symlinked prefixes (/tmp on macOS) must match
+    repo = git_toplevel(os.path.dirname(fp))          # git's resolved toplevel
+    if not repo or not args.session:
+        return
+    rel = os.path.relpath(fp, os.path.realpath(repo))
+    if rel.startswith(".."):
+        return
+    p = provenance_path(repo)
+    try:
+        st = json.load(open(p))
+    except Exception:
+        st = {"v": 1, "sessions": {}}
+    sess = st["sessions"].pop(args.session, None) or {"paths": []}
+    st["sessions"][args.session] = sess          # re-inserted last → the session map stays LRU-ordered
+    paths = sess.setdefault("paths", [])
+    if rel in paths:
+        return
+    paths.append(rel)
+    del paths[:-PROVENANCE_CAP]
+    while len(st["sessions"]) > PROVENANCE_SESSIONS:
+        del st["sessions"][next(iter(st["sessions"]))]
+    try:
+        write_json(p, st)
+    except OSError:
+        pass
+
+
 def cmd_baseline(args):
     """UserPromptSubmit: stamp HEAD + the dirty set at turn start, so later work by this session shows.
-    Also stamps when the session first touched the repo (`started`) — the anchor that tells commits this
-    session authored from work that was already here when we arrived."""
+    Also stamps when the session first touched the repo (`started`) — the GC key for stale sessions."""
     repo = os.path.abspath(args.repo)
     branch = cur_branch(repo)
     if not branch:
@@ -767,7 +825,8 @@ def cmd_baseline(args):
 
 def engaged(repo, cfg, session):
     """True if THIS session produced work on the current branch — HEAD advanced or the tree changed
-    since this session's baseline. `enabled: false` opts a repo out."""
+    since this session's baseline, or the branch carries paths this session observably edited
+    (PostToolUse provenance). `enabled: false` opts a repo out."""
     if not cfg.get("enabled", True):
         return False
     branch = cur_branch(repo)
@@ -786,14 +845,15 @@ def engaged(repo, cfg, session):
             entry["engaged"] = True
             write_sessions(repo, st)
             return True
-    # single-turn delivery: a branch created mid-turn is baselined late (or not at all before the
-    # Stop fires) and never shows a delta — but commits ahead of base authored after the session
-    # started are ours, entry or no entry
-    started = sess.get("started")
-    if started:
+    # provenance: the branch carries a path this session OBSERVABLY edited (PostToolUse events) —
+    # claims a branch created mid-turn that has no baseline entry; a checked-out teammate branch
+    # carries none of our paths and stays silent
+    prov = provenance_paths(repo, session)
+    if prov:
         base, _ = default_branch(repo, remote_name(repo))
-        rc, n, _ = run(["git", "rev-list", "--count", f"{base}..HEAD", f"--since={started}"], repo)
-        if rc == 0 and n.isdigit() and int(n) > 0:
+        _, names, _ = run(["git", "diff", "--name-only", f"{base}...HEAD"], repo)
+        carried = set(names.splitlines()) | {p for _, p in porcelain_status(repo)}
+        if prov & carried:
             sess.setdefault("branches", {}).setdefault(branch, {})["engaged"] = True
             write_sessions(repo, st)
             return True
@@ -935,7 +995,8 @@ def cmd_engage(args):
         if "push" in acts:
             stamp_sibling(repo, "mr-watchdog-session.json", branch, args.session, {"engaged": True})
     created = any(a.startswith("pr:draft") or a.startswith("pr:ready") or a == "pr:gitlab-mr" for a in acts)
-    if created:
+    # only the marker that DROVE this PR is consumed — another branch's marker survives a todos-driven ship
+    if created and verdict.get("source") == "marker":
         clear_marker(repo)
     out = {}
     if "push-held:merge-review-pending" in res["blocked"]:
@@ -959,7 +1020,8 @@ def cmd_engage(args):
 
 def cmd_mark_done(args):
     repo = os.path.abspath(args.repo)
-    data = {"done": True, "summary": (args.summary or "").strip()[:72], "type": args.type}
+    data = {"done": True, "summary": (args.summary or "").strip()[:72], "type": args.type,
+            "branch": cur_branch(repo)}
     p = marker_path(repo)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     write_json(p, data)
@@ -1015,6 +1077,9 @@ def main():
     b = sub.add_parser("baseline")
     b.add_argument("--repo", default="."); b.add_argument("--config"); b.add_argument("--session", default="")
     b.set_defaults(fn=cmd_baseline)
+    pv = sub.add_parser("provenance")
+    pv.add_argument("--file", required=True); pv.add_argument("--session", default="")
+    pv.set_defaults(fn=cmd_provenance)
     g = sub.add_parser("engaged")
     g.add_argument("--repo", default="."); g.add_argument("--config"); g.add_argument("--session", default="")
     g.set_defaults(fn=cmd_engaged)
