@@ -257,9 +257,50 @@ def ci_status(repo, forge, branch):
     return "error"
 
 
-def failing_log(repo, forge, branch):
+def ci_status_at(repo, forge, sha):
+    """ci_status bound to an EXACT commit — the watcher's verdict must belong to the sha it watches.
+    Right after a push the forge briefly serves the previous run's branch-level result; a verdict for
+    another commit is not a verdict. 'none' (nothing registered for this sha yet) keeps the poll going."""
     if forge == "github":
-        rc, out, _ = run(["gh", "run", "list", "-b", branch, "-L", "1", "--json", "databaseId"], repo)
+        rc, out, _ = run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs"], repo)
+        if rc != 0:
+            return "error"
+        try:
+            runs = (json.loads(out or "{}") or {}).get("check_runs", [])
+        except Exception:
+            return "error"
+        if not runs:
+            return "none"
+        if any(r.get("conclusion") in ("failure", "cancelled", "timed_out") for r in runs):
+            return "failed"
+        if any(r.get("status") != "completed" for r in runs):
+            return "pending"
+        return "success"
+    if forge == "gitlab":
+        rc, out, _ = run(["glab", "api", f"projects/:id/pipelines?sha={sha}&per_page=1"], repo)
+        if rc != 0:
+            return "error"
+        try:
+            arr = json.loads(out or "[]")
+        except Exception:
+            return "error"
+        if not arr:
+            return "none"
+        st = (arr[0].get("status") or "").lower()
+        if st in ("failed", "canceled"):
+            return "failed"
+        if st == "success":
+            return "success"
+        return "pending"
+    return "error"
+
+
+def failing_log(repo, forge, branch, sha=None):
+    if forge == "github":
+        rc, out, _ = run(["gh", "run", "list", "-c", sha, "-L", "1", "--json", "databaseId"], repo) \
+            if sha else (1, "", "")
+        if rc != 0 or not out or out == "[]":
+            rc, out, _ = run(["gh", "run", "list", "-b", branch, "-L", "1", "--json", "databaseId"], repo)
         try:
             rid = json.loads(out)[0]["databaseId"]
         except Exception:
@@ -496,9 +537,9 @@ def launch_instruction(repo):
 def cmd_run(args):
     """Foreground CI watcher meant to be launched with run_in_background. Polls until the pipeline
     resolves, prints the verdict, and exits (0 green / 1 red). The harness re-invokes the session with
-    this output — that is how the verdict reaches you. Read-only. A red status is confirmed on a
-    second poll before the verdict: right after a push the forge can briefly serve the PREVIOUS run's
-    failure, and one stale read must never produce a false red."""
+    this output — that is how the verdict reaches you. Read-only. The status is read for the EXACT
+    sha being watched (ci_status_at), never branch-level: right after a push the forge briefly serves
+    the previous run's result, and a verdict for another commit is not a verdict."""
     repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
     if not cfg.get("enabled", True):
@@ -511,7 +552,6 @@ def cmd_run(args):
     head = head_sha(repo)
     deadline = time.time() + float(args.timeout or cfg.get("watch_timeout", 3600))
     errors = 0
-    red_seen = False
     while True:
         if current_branch(repo) != branch or head_sha(repo) != head:
             print("[mr-watchdog] stopped: branch/HEAD moved — a fresh watcher starts after the next push")
@@ -519,7 +559,7 @@ def cmd_run(args):
         if not mr_open(repo, forge, branch):
             print("[mr-watchdog] stopped: no open merge request for this branch")
             return
-        status = ci_status(repo, forge, branch)
+        status = ci_status_at(repo, forge, head)
         errors = errors + 1 if status == "error" else 0
         if errors >= 5:
             print("[mr-watchdog] stopped: the forge CLI keeps failing to read CI status "
@@ -529,18 +569,13 @@ def cmd_run(args):
             print(f"[mr-watchdog] ok, all good — CI green on '{branch}'")
             return
         if status == "failed":
-            if not red_seen:
-                red_seen = True
-                time.sleep(max(1, int(cfg["poll_interval"])))
-                continue
-            log = failing_log(repo, forge, branch)
+            log = failing_log(repo, forge, branch, head)
             if cfg.get("on_red", "fix") == "fix":
                 print(fix_instruction(repo, branch, log))
             else:
                 tail = "\n".join(log.splitlines()[-int(cfg["log_lines"]):])
                 print(f"[mr-watchdog] CI red on '{branch}' — needs a fix. Failing job log:\n{tail}")
             sys.exit(1)
-        red_seen = False
         if time.time() > deadline:
             print(f"[mr-watchdog] stopped: timeout while CI was {status}")
             return
