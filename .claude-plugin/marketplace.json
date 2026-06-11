@@ -17,7 +17,7 @@
     },
     {
       "name": "aws-remote-auth",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "source": "./plugins/aws-remote-auth",
       "description": "On-demand AWS SSO re-authentication via device code (autofill link), with a PreToolUse hook that auto-detects expired sessions on aws commands. Generic across profiles and SSO portals.",
       "category": "development",
