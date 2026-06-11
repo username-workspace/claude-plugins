@@ -25,7 +25,7 @@
     },
     {
       "name": "delivery-metrics",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "source": "./plugins/delivery-metrics",
       "description": "Generate a developer productivity & quality report (interactive HTML dashboard) from git history — single repo or submodule workspace. Repo-agnostic and configurable.",
       "category": "development",
