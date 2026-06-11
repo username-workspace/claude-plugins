@@ -478,6 +478,53 @@ printf '{"gate":"true"}' > "$d/.git/ship-when-done.json"
 g=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$SHIP")'); import ship; print(ship.load_config('$d')['gate'])")
 assert_eq "true" "$g" "34. .git/ship-when-done.json still sets the gate (local, never cloned)"
 
+# 35. INCIDENT: porcelain is positional — a worktree-modified path (' M tests/…') stripped of its
+# leading space loses the first character of the path, and the scope becomes 'ests'
+d="$ROOT/t35"; new_repo "$d"; git -C "$d" checkout -q -b feat
+mkdir -p "$d/tests/e2e"; echo '{}' > "$d/tests/e2e/coverage.json"
+git -C "$d" add -A; git -C "$d" commit -qm baseline
+echo '{"a":1}' > "$d/tests/e2e/coverage.json"
+ladder "$d" '{"done":false}' skip >/dev/null
+msg=$(git -C "$d" log -1 --pretty=%s)
+assert_contains '(tests)' "$msg" "35. scope from a worktree-modified path keeps its first character"
+assert_absent '(ests)' "$msg" "35. no mangled scope from stripped porcelain"
+
+# 36. INCIDENT: a path claimed by a LIVE background writer (.git/swd-claims.json, path → pid) is
+# invisible to ship — never swept into a commit, never counted as in-flight work
+d="$ROOT/t36"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+mkdir -p "$d/tests/e2e"; echo '{}' > "$d/tests/e2e/coverage.json"
+git -C "$d" add -A; git -C "$d" commit -qm baseline
+echo partial > "$d/tests/e2e/coverage.json"; echo x > "$d/a.txt"
+printf '{"tests/e2e/coverage.json": %s}' "$$" > "$d/.git/swd-claims.json"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'commit' "$out" "36. unclaimed work still commits"
+case "$(git -C "$d" show --pretty= --name-only HEAD)" in *coverage.json*) ko "36. claimed path swept into the commit";; *) ok "36. claimed path NOT in the commit";; esac
+case "$(git -C "$d" status --porcelain)" in *coverage.json*) ok "36. claimed change stays in the tree";; *) ko "36. claimed change stays in the tree";; esac
+case "$(git -C "$d" log -1 --pretty=%s)" in *coverage.json*) ko "36. claimed path leaked into the subject";; *) ok "36. commit subject ignores the claimed path";; esac
+# claimed-only changes → nothing in flight (no partial-ledger commit while the writer runs)
+d="$ROOT/t36b"; new_repo "$d" --remote
+mkdir -p "$d/tests/e2e"; echo '{}' > "$d/tests/e2e/coverage.json"
+git -C "$d" add -A; git -C "$d" commit -qm baseline; git -C "$d" push -q origin main 2>/dev/null
+git -C "$d" checkout -q -b feat
+echo partial > "$d/tests/e2e/coverage.json"
+printf '{"tests/e2e/coverage.json": %s}' "$$" > "$d/.git/swd-claims.json"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'nothing-in-flight' "$out" "36b. claimed-only changes → nothing in flight"
+assert_eq 2 "$(count "$d" HEAD)" "36b. no commit of a partial ledger"
+# a dead writer's claim is void — the path is sweepable again (no stale lock)
+d="$ROOT/t36c"; new_repo "$d"; git -C "$d" checkout -q -b feat
+echo y > "$d/f.txt"
+sleep 0 & deadpid=$!; wait "$deadpid" 2>/dev/null
+printf '{"f.txt": %s}' "$deadpid" > "$d/.git/swd-claims.json"
+out=$(ladder "$d" '{"done":false}' skip)
+assert_contains 'commit' "$out" "36c. dead writer → claim void, work swept normally"
+# claim/release subcommands own the protocol file
+d="$ROOT/t36d"; new_repo "$d"
+python3 "$SHIP" claim --repo "$d" --path tests/e2e/coverage.json --pid "$$" >/dev/null 2>&1
+case "$(cat "$d/.git/swd-claims.json" 2>/dev/null)" in *coverage.json*) ok "36d. claim writes the protocol file";; *) ko "36d. claim writes the protocol file";; esac
+python3 "$SHIP" release --repo "$d" --path tests/e2e/coverage.json >/dev/null 2>&1
+case "$(cat "$d/.git/swd-claims.json" 2>/dev/null)" in *coverage.json*) ko "36d. release drops the claim";; *) ok "36d. release drops the claim";; esac
+
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
 

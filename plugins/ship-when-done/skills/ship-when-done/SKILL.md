@@ -111,6 +111,22 @@ mr-watchdog's watcher-launch nudge in the same turn. Loose coupling via the sibl
 absent, all of this is inert. (The only remote dependency in the ship-when-done → merge-review →
 mr-watchdog chain is mr-watchdog itself.)
 
+## Background writers (claims)
+
+A long-running process that keeps writing a file across turns (a test campaign filling a ledger, a
+build emitting artifacts) would otherwise be swept mid-write at every Stop. It can **claim** the path
+for the duration of its run:
+
+```bash
+python3 scripts/ship.py claim --repo . --path tests/e2e/coverage.json --pid $$
+# ... write freely across turns ...
+python3 scripts/ship.py release --repo . --path tests/e2e/coverage.json
+```
+
+A claimed path is invisible to ship — never committed, never counted as in-flight work — until it is
+released or the claiming pid exits (a dead writer's claim is void, so a crashed run never leaves a
+stale lock). State lives in `.git/swd-claims.json` (path → pid, never committed).
+
 ## Manual / debug
 
 ```bash

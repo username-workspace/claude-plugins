@@ -464,33 +464,38 @@ def main():
 
     runid = format(int(time.time()) % 36 ** 4, "x")
     print(f"harness-e2e · forge={E2E_REPO} · seed={args.seed} · run={runid} · {len(scenarios)} scenario(s)")
-    gc_sandbox()
+    sh([sys.executable, SHIP, "claim", "--repo", SKILLS, "--path", "tests/e2e/coverage.json",
+        "--pid", str(os.getpid())])
     failures = 0
-    for i, sc in enumerate(scenarios):
-        tag = f"s{args.seed}n{i}r{runid}"
-        label = (f"twist/{sc['twist']}" if sc.get("twist")
-                 else f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}")
-        t0 = time.time()
-        for attempt in (1, 2):
-            try:
-                run_scenario(sc, f"{tag}a{attempt}")
-                coverage_record(label, runid, round(time.time() - t0))
-                print(f"  ✓ {label}  ({round(time.time() - t0)}s"
-                      + (", flaky: passed on retry)" if attempt == 2 else ")"))
-                break
-            except Failure as e:
-                if attempt == 1:
-                    cause = str(e).splitlines()[0]
-                    print(f"  ↻ {label} failed ({cause}) — retrying once to classify flake vs defect")
-                    continue
-                failures += 1
-                print(f"  ✗ {label} — persistent:\n{e}")
-                file_issue(sc, tag, e)
-            except Exception as e:
-                failures += 1
-                print(f"  ✗ {label} — infrastructure error: {e}")
-                break
-    gc_sandbox()
+    try:
+        gc_sandbox()
+        for i, sc in enumerate(scenarios):
+            tag = f"s{args.seed}n{i}r{runid}"
+            label = (f"twist/{sc['twist']}" if sc.get("twist")
+                     else f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}")
+            t0 = time.time()
+            for attempt in (1, 2):
+                try:
+                    run_scenario(sc, f"{tag}a{attempt}")
+                    coverage_record(label, runid, round(time.time() - t0))
+                    print(f"  ✓ {label}  ({round(time.time() - t0)}s"
+                          + (", flaky: passed on retry)" if attempt == 2 else ")"))
+                    break
+                except Failure as e:
+                    if attempt == 1:
+                        cause = str(e).splitlines()[0]
+                        print(f"  ↻ {label} failed ({cause}) — retrying once to classify flake vs defect")
+                        continue
+                    failures += 1
+                    print(f"  ✗ {label} — persistent:\n{e}")
+                    file_issue(sc, tag, e)
+                except Exception as e:
+                    failures += 1
+                    print(f"  ✗ {label} — infrastructure error: {e}")
+                    break
+        gc_sandbox()
+    finally:
+        sh([sys.executable, SHIP, "release", "--repo", SKILLS, "--path", "tests/e2e/coverage.json"])
     print(f"\n{'all green' if failures == 0 else f'{failures} persistent failure(s) — issues filed'}")
     sys.exit(1 if failures else 0)
 
