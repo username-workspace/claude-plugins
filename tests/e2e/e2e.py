@@ -433,6 +433,8 @@ def main():
     ap.add_argument("--twists", action="store_true",
                     help="human-divergence situations (dirty start, amend, manual push, review loop…)")
     ap.add_argument("--coverage", action="store_true", help="print the proven-situations ledger")
+    ap.add_argument("--fill", action="store_true",
+                    help="run exactly the bare combos the ledger has never proven (target the holes)")
     args = ap.parse_args()
     globals()["E2E_REPO"] = args.repo
 
@@ -446,6 +448,11 @@ def main():
         else:
             scenarios = [{"flow": parts[0], "gate": parts[1], "ci": parts[2],
                           **({"project": parts[3]} if len(parts) > 3 else {})}]
+    elif args.fill:
+        cov = coverage_read()
+        scenarios = [{"flow": f, "gate": g, "ci": c}
+                     for f in DIMS["flow"] for g in DIMS["gate"] for c in DIMS["ci"]
+                     if f"bare/{f}/{g}/{c}" not in cov]
     elif args.twists:
         scenarios = [{"twist": t} for t in TWISTS]
     elif args.projects:
