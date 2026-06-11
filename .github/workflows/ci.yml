@@ -10,5 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: README in sync with marketplace.json
+        run: python3 scripts/readme.py --check
       - name: Run plugin test suites
         run: bash scripts/run-tests.sh
