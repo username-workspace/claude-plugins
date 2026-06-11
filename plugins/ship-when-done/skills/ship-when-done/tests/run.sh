@@ -187,6 +187,20 @@ env GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:0
 env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S2 >/dev/null   # visiting: ahead, but old
 assert_eq "no" "$(eng "$d" S2)" "11e. pre-existing branch (commits predate the session) → NOT engaged"
 
+# 11g. INCIDENT: branch created + committed manually MID-turn — the Stop fires before the branch has
+# any baseline entry, and the session-start anchor must claim it anyway (pre-session commits must not)
+d="$ROOT/t11g"; new_repo "$d" --remote
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S4 >/dev/null   # session starts on main
+git -C "$d" checkout -q -b feat-midturn
+echo x > "$d/a.txt"; git -C "$d" add -A; git -C "$d" commit -qm "authored this session"
+assert_eq "yes" "$(eng "$d" S4)" "11g. unbaselined mid-turn branch, session-authored commits → engaged"
+d="$ROOT/t11h"; new_repo "$d" --remote
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session S5 >/dev/null
+git -C "$d" checkout -q -b preexisting-nobaseline
+env GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00" \
+  git -C "$d" commit -q --allow-empty -m "old work from before this session"
+assert_eq "no" "$(eng "$d" S5)" "11g. unbaselined branch, pre-session commits → NOT engaged"
+
 # 12a. gate auto-detection from package.json (+ lockfile → runner)
 d="$ROOT/t12"; new_repo "$d"
 printf '{"scripts":{"ts:check":"tsc --noEmit","test":"vitest"}}' > "$d/package.json"; touch "$d/pnpm-lock.yaml"

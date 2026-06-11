@@ -750,23 +750,23 @@ def engaged(repo, cfg, session):
     if not st or st.get("session") != session:
         return False
     entry = st["branches"].get(branch)
-    if not entry:
-        return False
-    if entry.get("engaged"):
-        return True
-    head, dirty = work_state(repo)
-    if head != entry.get("head") or dirty != entry.get("dirty"):
-        entry["engaged"] = True
-        write_session(repo, st)
-        return True
-    # single-turn delivery: a branch baselined only after its work is committed never shows a delta,
-    # but if its commits ahead of base were authored after the session started, they are ours
+    if entry:
+        if entry.get("engaged"):
+            return True
+        head, dirty = work_state(repo)
+        if head != entry.get("head") or dirty != entry.get("dirty"):
+            entry["engaged"] = True
+            write_session(repo, st)
+            return True
+    # single-turn delivery: a branch created mid-turn is baselined late (or not at all before the
+    # Stop fires) and never shows a delta — but commits ahead of base authored after the session
+    # started are ours, entry or no entry
     started = st.get("started")
     if started:
         base, _ = default_branch(repo, remote_name(repo))
         rc, n, _ = run(["git", "rev-list", "--count", f"{base}..HEAD", f"--since={started}"], repo)
         if rc == 0 and n.isdigit() and int(n) > 0:
-            entry["engaged"] = True
+            st["branches"].setdefault(branch, {})["engaged"] = True
             write_session(repo, st)
             return True
     return False
