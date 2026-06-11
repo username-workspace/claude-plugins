@@ -52,6 +52,12 @@ prompt; after approval, re-run the command.
   profiles declared in either file, legacy `sso_start_url` keys, the `sso_session` token-provider
   format, and assume-role chains via `source_profile` (the source profile owning the SSO is the one
   logged in).
-- A pending login is reused (not relaunched) if you retry before approving.
+- A pending login is reused (not relaunched) if you retry before approving. The autofill capture
+  window is a **soft** deadline (`AWS_REMOTE_AUTH_CAPTURE_TIMEOUT`, default 12s — keep it under the
+  hook's 20s budget): if the CLI prints the URL after the window, the next call recovers it from the
+  running login's log instead of spawning a duplicate device login.
+- `expiresAt` is honoured in every format the CLI has written (ISO `…Z`, legacy `… UTC`, bare
+  timestamps — naive means UTC). Right after browser approval the CLI may take a moment to write the
+  token cache; if a command still trips the hook, just re-run it.
 - Requires AWS CLI v2 (`aws sso login --use-device-code`). Covers `aws` commands; for `terraform`
   or SDK calls, run `login` on demand first.

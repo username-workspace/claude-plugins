@@ -28,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 SSO_CACHE = Path.home() / ".aws" / "sso" / "cache"
@@ -104,6 +104,20 @@ def resolve_sso(profile, profiles=None, sessions=None, _seen=None):
     return None
 
 
+def _parse_expiry(raw):
+    """expiresAt as written by the CLI v2 ('…Z'), legacy botocore ('YYYY-MM-DD HH:MM:SS UTC') or a
+    bare ISO timestamp. A naive timestamp means UTC — parsing it as local time would shift the
+    verdict by the host's offset."""
+    raw = raw.strip().replace("Z", "+00:00")
+    if raw.endswith(" UTC"):
+        raw = raw[:-4].replace(" ", "T") + "+00:00"
+    try:
+        exp = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)
+
+
 def token_expiry(start_url):
     # The same portal can have several cache files (legacy startUrl-hash + sso_session-name-hash,
     # or stale tokens never pruned). Take the FRESHEST match, not the first one the glob yields,
@@ -118,12 +132,8 @@ def token_expiry(start_url):
             continue
         cached = data.get("startUrl")
         if cached and cached.rstrip("/") == start_url.rstrip("/") and data.get("accessToken") and data.get("expiresAt"):
-            raw = data["expiresAt"].replace("Z", "+00:00")
-            try:
-                exp = datetime.fromisoformat(raw)
-            except ValueError:
-                continue
-            if best is None or exp > best:
+            exp = _parse_expiry(data["expiresAt"])
+            if exp is not None and (best is None or exp > best):
                 best = exp
     return best
 
@@ -138,15 +148,33 @@ def _pending_path(start_url):
     return PENDING_DIR / f"{key}.json"
 
 
+def _scan_log(log_path, pending):
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None, None
+    m = AUTOFILL_RE.search(text)
+    if not m:
+        return None, None
+    url, code = m.group(1), m.group(2)
+    pending.write_text(json.dumps({"url": url, "code": code}), encoding="utf-8")
+    return url, code
+
+
 def start_device_login(login_profile, start_url):
+    """The capture window is a SOFT deadline: the pending file records the running login's log the
+    moment it is spawned, so a URL that arrives after the window is recovered on the next call — a
+    started login is never lost and never duplicated while its pending entry is fresh."""
     pending = _pending_path(start_url)
     if pending.is_file() and (time.time() - pending.stat().st_mtime) < PENDING_TTL:
         try:
             cached = json.loads(pending.read_text(encoding="utf-8"))
-            if cached.get("url"):
-                return cached["url"], cached.get("code", "")
         except (ValueError, OSError):
-            pass
+            cached = {}
+        if cached.get("url"):
+            return cached["url"], cached.get("code", "")
+        if cached.get("log"):
+            return _scan_log(cached["log"], pending)
 
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(PENDING_DIR, 0o700)
@@ -160,14 +188,16 @@ def start_device_login(login_profile, start_url):
             )
     except OSError:
         return None, None
+    pending.write_text(json.dumps({"log": log.name}), encoding="utf-8")
 
-    deadline = time.time() + 12
+    try:
+        window = float(os.environ.get("AWS_REMOTE_AUTH_CAPTURE_TIMEOUT", "12"))
+    except ValueError:
+        window = 12.0
+    deadline = time.time() + window
     while time.time() < deadline:
-        text = Path(log.name).read_text(encoding="utf-8", errors="replace")
-        m = AUTOFILL_RE.search(text)
-        if m:
-            url, code = m.group(1), m.group(2)
-            pending.write_text(json.dumps({"url": url, "code": code}), encoding="utf-8")
+        url, code = _scan_log(log.name, pending)
+        if url:
             return url, code
         time.sleep(0.4)
     return None, None

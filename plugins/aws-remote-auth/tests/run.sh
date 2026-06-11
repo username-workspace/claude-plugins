@@ -69,7 +69,7 @@ EOF
 chmod +x "$BIN/aws"
 # a minimal real-tool PATH so `which(aws)` is the only forge-presence variable under test
 REAL="$ROOT/realbin"; mkdir -p "$REAL"
-for t in python3 bash env rm cat; do ln -sf "$(command -v "$t")" "$REAL/$t" 2>/dev/null; done
+for t in python3 bash env rm cat sleep; do ln -sf "$(command -v "$t")" "$REAL/$t" 2>/dev/null; done
 export PATH="$BIN:$REAL:$PATH"
 
 now_plus(){ python3 -c "import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=int(sys.argv[1]))).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$1"; }
@@ -246,6 +246,44 @@ clear_cache
 printf '{"startUrl":"https://my.awsapps.com/start","accessToken":"new","expiresAt":"%s"}\n' "$(now_plus 36000)" > "$CACHE/aaa_fresh.json"
 printf '{"startUrl":"https://my.awsapps.com/start","accessToken":"old","expiresAt":"%s"}\n' "$(now_plus -3600)" > "$CACHE/zzz_stale.json"
 assert_contains 'valid until' "$(python3 "$SSO" status dev)" "18e. order-independent: stale-first still resolves valid"
+
+# 20. expiresAt formats seen in the wild: legacy botocore '… UTC' and naive ISO (no tz) must both
+# parse — and a naive timestamp means UTC, never local time (a TZ offset must not flip the verdict)
+clear_cache
+legacy=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=4)).strftime('%Y-%m-%d %H:%M:%S UTC'))")
+seed_token "https://my.awsapps.com/start" "$legacy"
+assert_contains 'valid until' "$(python3 "$SSO" status dev)" "20a. legacy '… UTC' expiresAt parses (valid token not dropped)"
+clear_cache
+naive=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%S'))")
+seed_token "https://my.awsapps.com/start" "$naive"
+assert_contains 'valid until' "$(TZ=XXX-12 python3 "$SSO" status dev)" "20b. naive expiresAt read as UTC (local-time parse would say expired)"
+assert_contains 'valid until' "$(TZ=XXX+12 python3 "$SSO" status dev)" "20b. naive-as-UTC verdict is TZ-independent"
+
+# 21. capture window is a soft deadline: a login whose URL arrives AFTER the window is recovered
+# from its log on the next call — never lost, never relaunched as a duplicate device login
+SLOWBIN="$ROOT/slowbin"; mkdir -p "$SLOWBIN"; SLOW_CALLS="$ROOT/aws-slow-login.log"; : > "$SLOW_CALLS"
+cat > "$SLOWBIN/aws" <<EOF
+#!/usr/bin/env bash
+if [ "\$1 \$2" = "sso login" ]; then
+  echo "\$@" >> "$SLOW_CALLS"
+  sleep 2
+  echo "https://device.sso.eu-west-1.amazonaws.com/?user_code=SLOW-9999"
+fi
+exit 0
+EOF
+chmod +x "$SLOWBIN/aws"
+slow_hook(){ printf '%s' "$1" | env PATH="$SLOWBIN:$REAL" AWS_REMOTE_AUTH_CAPTURE_TIMEOUT=1 python3 "$SSO" hook 2>&1; }
+clear_pending; clear_cache; seed_token "https://my.awsapps.com/start" "$(now_plus -10)"
+out1=$(slow_hook '{"tool_input":{"command":"aws s3 ls --profile dev"}}')
+assert_contains '"permissionDecision": "deny"' "$out1" "21. slow login → still denies (manual fallback)"
+assert_absent 'user_code=' "$out1" "21. URL not yet available within the capture window"
+sleep 2.5
+out2=$(slow_hook '{"tool_input":{"command":"aws s3 ls --profile dev"}}')
+assert_contains 'user_code=SLOW-9999' "$out2" "21. late URL recovered from the running login's log"
+assert_eq 1 "$(wc -l < "$SLOW_CALLS" | tr -d ' ')" "21. no duplicate device login spawned"
+clear_pending; clear_cache; seed_token "https://my.awsapps.com/start" "$(now_plus -10)"
+out=$(printf '%s' '{"tool_input":{"command":"aws s3 ls --profile dev"}}' | AWS_REMOTE_AUTH_CAPTURE_TIMEOUT=garbage python3 "$SSO" hook 2>&1)
+assert_contains 'user_code=WXYZ-7788' "$out" "21. garbage capture-timeout env → default window, no crash"
 
 # 19. CLI usage contract: unknown/blank subcommand → usage on stderr, exit 2
 out=$(python3 "$SSO" bogus 2>&1); rc=$?
