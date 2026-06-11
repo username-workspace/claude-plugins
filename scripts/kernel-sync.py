@@ -3,6 +3,7 @@
 plugins stay self-contained while the repo keeps one source of truth. `--check` exits non-zero on
 drift — wired into CI and tests/harness, so a copy can never silently diverge again (the session
 schema was lockstep-patched by hand twice before this existed)."""
+import glob
 import os
 import shutil
 import sys
@@ -13,7 +14,9 @@ PLUGINS = ["ship-when-done", "mr-watchdog", "merge-review", "proof-of-fix"]
 
 
 def copies():
-    return [os.path.join(ROOT, "plugins", p, "skills", p, "scripts", "_kernel.py") for p in PLUGINS]
+    listed = {os.path.join(ROOT, "plugins", p, "skills", p, "scripts", "_kernel.py") for p in PLUGINS}
+    found = set(glob.glob(os.path.join(ROOT, "plugins", "*", "skills", "*", "scripts", "_kernel.py")))
+    return sorted(listed | found)
 
 
 def main():
