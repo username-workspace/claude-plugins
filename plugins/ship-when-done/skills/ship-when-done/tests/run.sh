@@ -587,6 +587,10 @@ before=$(grep -c 'pr create' "$GH_LOG")
 python3 "$SHIP" engage --repo "$d" --goal x >/dev/null 2>&1
 assert_eq "$before" "$(grep -c 'pr create' "$GH_LOG")" "37. feat-a marker does NOT open a PR for feat-b"
 [ -f "$d/.git/swd-done.json" ] && ok "37. marker kept for feat-a" || ko "37. marker kept for feat-a"
+# a todos-driven PR for feat-b must NOT consume feat-a's marker (only the marker that drove a PR is)
+python3 "$SHIP" engage --repo "$d" --goal x --todos-done >/dev/null 2>&1
+[ "$(grep -c 'pr create' "$GH_LOG")" -gt "$before" ] && ok "37. todos-done still ships feat-b" || ko "37. todos-done still ships feat-b"
+[ -f "$d/.git/swd-done.json" ] && ok "37. feat-a marker survives the todos-driven PR" || ko "37. feat-a marker survives the todos-driven PR"
 # branch-first move: a marker stamped on the trunk follows the work onto the derived branch — the
 # re-entrant turn (after the review pass) must still read 'done' once the ladder moved off main
 d="$ROOT/t37b"; new_repo "$d" --remote

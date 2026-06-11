@@ -995,7 +995,8 @@ def cmd_engage(args):
         if "push" in acts:
             stamp_sibling(repo, "mr-watchdog-session.json", branch, args.session, {"engaged": True})
     created = any(a.startswith("pr:draft") or a.startswith("pr:ready") or a == "pr:gitlab-mr" for a in acts)
-    if created:
+    # only the marker that DROVE this PR is consumed — another branch's marker survives a todos-driven ship
+    if created and verdict.get("source") == "marker":
         clear_marker(repo)
     out = {}
     if "push-held:merge-review-pending" in res["blocked"]:
