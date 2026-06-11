@@ -75,7 +75,17 @@ export PATH="$BIN:$REAL:$PATH"
 now_plus(){ python3 -c "import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=int(sys.argv[1]))).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$1"; }
 seed_token(){ printf '{"startUrl":"%s","accessToken":"tok","expiresAt":"%s"}\n' "$1" "$2" > "$CACHE/token.json"; }
 clear_cache(){ rm -f "$CACHE"/*.json 2>/dev/null || true; }
-clear_pending(){ rm -rf "$(python3 -c 'import tempfile,os;print(os.path.join(tempfile.gettempdir(),"aws-remote-auth"))')"; }
+clear_pending(){ rm -rf "$HOME/.aws/sso/remote-auth-pending"; }
+
+# security: the pending-relay dir must live under $HOME (0700), never in a shared, predictable /tmp
+# path — a co-tenant could pre-plant a pending file and have the victim approve the attacker's device code
+pd=$(python3 - "$SSO" <<'PD'
+import importlib.util as u, sys
+sp = u.spec_from_file_location("s", sys.argv[1]); m = u.module_from_spec(sp); sp.loader.exec_module(m)
+print(m.PENDING_DIR)
+PD
+)
+case "$pd" in "$HOME"*) ok "0. PENDING_DIR lives under \$HOME, not shared /tmp";; *) ko "0. PENDING_DIR lives under \$HOME — got [$pd]";; esac
 hook(){ printf '%s' "$1" | python3 "$SSO" hook 2>&1; }
 
 echo "aws-remote-auth tests"

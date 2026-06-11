@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 SSO_CACHE = Path.home() / ".aws" / "sso" / "cache"
-PENDING_DIR = Path(tempfile.gettempdir()) / "aws-remote-auth"
+PENDING_DIR = Path.home() / ".aws" / "sso" / "remote-auth-pending"
 PENDING_TTL = 9 * 60
 SKEW = 60
 AUTOFILL_RE = re.compile(r"(https?://\S*[?&]user_code=([A-Za-z0-9-]+))")
@@ -149,6 +149,7 @@ def start_device_login(login_profile, start_url):
             pass
 
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(PENDING_DIR, 0o700)
     log = tempfile.NamedTemporaryFile("w+", dir=PENDING_DIR, suffix=".log", delete=False)
     log.close()
     try:
