@@ -313,6 +313,12 @@ else
   ok "D4. empty daily rows → nonzero exit (no empty report)"
 fi
 
+# D5. ccusage is version-pinned — a floating @latest is not reproducible (schema/pricing can drift)
+: > "$NPX_LOG"
+python3 "$SCRIPTS/collect-multiprovider.py" >/dev/null 2>&1 || true
+case "$(cat "$NPX_LOG")" in *'ccusage@latest'*) ko "D5. no floating @latest";; *) ok "D5. no floating @latest";; esac
+case "$(cat "$NPX_LOG")" in *'ccusage@20.0.11 daily --json'*) ok "D5. exact ccusage version pinned";; *) ko "D5. exact ccusage version pinned — got [$(cat "$NPX_LOG")]";; esac
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"

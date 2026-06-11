@@ -52,7 +52,8 @@ per-token source instead of re-parsing each agent's directory:
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/coding-agent-usage/scripts/collect-multiprovider.py" [ccusage-daily.json] > /tmp/cc-multi-data.json
 ```
-With no argument it runs `npx ccusage@latest daily --json`; pass a pre-saved ccusage JSON to skip the
+With no argument it runs `npx ccusage@<pinned> daily --json` (exact version pinned in the script, so
+schema and pricing can't drift under a run); pass a pre-saved ccusage JSON to skip the
 network call. It attributes every `modelBreakdown` to a provider (Anthropic / OpenAI / Google / Other)
 by model name and emits per-provider cost, token and monthly-trend series. Build with
 `assets/report-multiprovider-template.html` (inject as `window.MDATA`, write to

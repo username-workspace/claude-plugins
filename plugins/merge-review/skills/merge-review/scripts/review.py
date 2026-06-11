@@ -60,14 +60,26 @@ def run(cmd, cwd, check=False, timeout=None):
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
+# These decide whether and how strictly pushes are gated (skip_marker "" exempts EVERY branch): never
+# honored from the (cloneable) working-tree file, only from .git/ (never cloned) or an explicit config
+GATE_FIELDS = ("enabled", "threshold", "prepush_gate", "skip_marker")
+
+
 def load_config(repo, path=None):
     cfg = dict(DEFAULTS)
-    for p in [os.path.join(repo, ".merge-review.json"), path]:
+    sources = [(os.path.join(repo, ".merge-review.json"), False),
+               (os.path.join(git_dir(repo), "merge-review.json"), True),
+               (path, True)]
+    for p, trusted in sources:
         if p and os.path.isfile(p):
             try:
-                cfg.update(json.load(open(p)))
+                data = json.load(open(p))
             except Exception:
-                pass
+                continue
+            if not trusted:
+                for f in GATE_FIELDS:
+                    data.pop(f, None)
+            cfg.update(data)
     return cfg
 
 

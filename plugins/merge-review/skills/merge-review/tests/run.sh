@@ -52,9 +52,9 @@ d="$ROOT/eng"; mkrepo "$d"; git -C "$d" checkout -q -b feat
 work "$d"
 [ "$("$PY" "$RV" engaged --repo "$d" --session s1)" = yes ] && ok "engaged: after this session's work → yes" || ko "engaged work→yes"
 [ "$("$PY" "$RV" engaged --repo "$d" --session other)" = no ] && ok "engaged: different session → no" || ko "engaged other-session→no"
-printf '{"enabled":false}' > "$d/.merge-review.json"
+printf '{"enabled":false}' > "$d/.git/merge-review.json"
 [ "$("$PY" "$RV" engaged --repo "$d" --session s1)" = no ] && ok "engaged: enabled:false → no" || ko "engaged disabled→no"
-rm -f "$d/.merge-review.json"
+rm -f "$d/.git/merge-review.json"
 # default branch is never engaged
 db="$ROOT/eng-main"; mkrepo "$db"
 "$PY" "$RV" baseline --repo "$db" --session s1; echo x >> "$db/app.txt"; git -C "$db" add -A; git -C "$db" commit -qm x
@@ -75,7 +75,7 @@ ng="$ROOT/gate-ne"; mkrepo "$ng"; git -C "$ng" checkout -q -b feat; "$PY" "$RV" 
 [ -z "$("$PY" "$RV" gate --repo "$ng" --session s1)" ] && ok "gate: not engaged → allow (silent)" || ko "gate not-engaged"
 # gate disabled via config
 gd="$ROOT/gate-off"; mkrepo "$gd"; git -C "$gd" checkout -q -b feat
-"$PY" "$RV" baseline --repo "$gd" --session s1; work "$gd"; printf '{"prepush_gate":false}' > "$gd/.merge-review.json"
+"$PY" "$RV" baseline --repo "$gd" --session s1; work "$gd"; printf '{"prepush_gate":false}' > "$gd/.git/merge-review.json"
 [ -z "$("$PY" "$RV" gate --repo "$gd" --session s1)" ] && ok "gate: prepush_gate:false → allow" || ko "gate disabled"
 
 # --- 6. record / prior + threshold --------------------------------------------------------------
@@ -89,10 +89,25 @@ pr=$("$PY" "$RV" prior --repo "$r")
 case "$pr" in *'"pass": 2'*) ok "record: pass counter increments";; *) ko "record pass2";; esac
 case "$pr" in *'"passed": true'*) ok "record: passing pass recorded";; *) ko "record passed";; esac
 # configurable threshold
-t="$ROOT/thr"; mkrepo "$t"; git -C "$t" checkout -q -b feat; work "$t"; printf '{"threshold":90}' > "$t/.merge-review.json"
+t="$ROOT/thr"; mkrepo "$t"; git -C "$t" checkout -q -b feat; work "$t"; printf '{"threshold":90}' > "$t/.git/merge-review.json"
 "$PY" "$RV" record --repo "$t" --session s1 --score 85 >/dev/null
 case "$("$PY" "$RV" prior --repo "$t")" in *'"passed": false'*) ok "threshold: 85 < custom 90 → not passed";; *) ko "custom threshold";; esac
 case "$(env PATH="$ROOT/realbin" "$PY" "$RV" context --repo "$t")" in *'"threshold": 90'*) ok "context: custom threshold surfaced";; *) ko "context custom threshold";; esac
+
+# --- 6b. SECURITY: gate-evasion knobs are never honored from the cloneable tree file -------------
+sv="$ROOT/sec-knobs"; mkrepo "$sv"; git -C "$sv" checkout -q -b feat
+"$PY" "$RV" baseline --repo "$sv" --session s1; work "$sv"
+printf '{"enabled":false,"threshold":0,"prepush_gate":false}' > "$sv/.merge-review.json"
+[ "$("$PY" "$RV" engaged --repo "$sv" --session s1)" = yes ] && ok "6b. tree enabled:false ignored (still engaged)" || ko "6b. tree enabled:false ignored"
+out=$("$PY" "$RV" gate --repo "$sv" --session s1)
+case "$out" in *'"permissionDecision": "deny"'*) ok "6b. tree prepush_gate:false ignored (gate still denies)";; *) ko "6b. tree prepush_gate:false ignored [$out]";; esac
+"$PY" "$RV" record --repo "$sv" --session s1 --score 40 >/dev/null
+case "$("$PY" "$RV" prior --repo "$sv")" in *'"passed": false'*) ok "6b. tree threshold:0 ignored (40 < default 80)";; *) ko "6b. tree threshold:0 ignored";; esac
+sk="$ROOT/sec-skip"; mkrepo "$sk"; git -C "$sk" checkout -q -b feat
+"$PY" "$RV" baseline --repo "$sk" --session s1; work "$sk"
+printf '{"skip_marker":""}' > "$sk/.merge-review.json"   # startswith("") matches EVERY branch
+out=$("$PY" "$RV" gate --repo "$sk" --session s1)
+case "$out" in *'"permissionDecision": "deny"'*) ok "6b. tree skip_marker:\"\" ignored (gate still denies)";; *) ko "6b. tree skip_marker bypass [$out]";; esac
 
 # --- 7. verify (fake-green guard) ---------------------------------------------------------------
 v="$ROOT/verify"; mkrepo "$v"; git -C "$v" checkout -q -b feat
