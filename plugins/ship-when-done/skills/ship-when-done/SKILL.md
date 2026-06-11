@@ -83,6 +83,10 @@ No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
 > read from the working-tree file** (which arrives with any clone). They are honored only from
 > `.git/ship-when-done.json` (local to your clone, never committed) or an explicitly passed
 > `--config` — set them there; in `.ship-when-done.json` they are ignored.
+
+When the project's runner has an impacted-only mode, pointing the LOCAL gate at it keeps Stop turns
+fast while CI stays on the full run — e.g. a multi-suite repo:
+`printf '{"gate":"bash scripts/run-tests.sh --impacted"}' > "$(git rev-parse --git-dir)/ship-when-done.json"`.
 ```jsonc
 {
   "enabled": true,              // set false to opt this repo OUT (engagement is otherwise automatic)
