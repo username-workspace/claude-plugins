@@ -232,6 +232,19 @@ python3 "$WATCH" baseline --repo "$d" --session S >/dev/null
 echo z>"$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
 assert_eq "" "$(STUB_CI=none python3 "$WATCH" hook --repo "$d" --session S)" "11. no pipeline yet → silent (nothing to watch)"
 assert_eq "" "$(STUB_CI=pending STUB_MR_STATE=CLOSED python3 "$WATCH" hook --repo "$d" --session S)" "11. no open MR → silent"
+# INCIDENT: CI already green at the Stop instant → the session was never told the verdict (it would
+# announce stale state or re-check by hand). The hook must hand the green over, once per HEAD,
+# bound to the EXACT sha — never the branch-level status
+d="$ROOT/hk3"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session S >/dev/null
+echo z>"$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
+GH_API_LOG="$ROOT/hk3-api.log"; : > "$GH_API_LOG"
+out=$(STUB_CI=success GH_API_LOG="$GH_API_LOG" python3 "$WATCH" hook --repo "$d" --session S)
+assert_contains '"decision": "block"' "$out" "11. CI already green at Stop → the verdict is handed to the session"
+assert_contains 'ok, all good' "$out" "11. the green handoff carries the wake word"
+assert_contains 'never merges' "$out" "11. the handoff restates the read-only guardrail"
+grep -q "$(git -C "$d" rev-parse HEAD)" "$GH_API_LOG" && ok "11. the green verdict is bound to the exact sha" || ko "11. the green verdict is bound to the exact sha"
+assert_eq "" "$(STUB_CI=success python3 "$WATCH" hook --repo "$d" --session S)" "11. green handoff once per HEAD → silent next time"
 
 # 12. Stop-hook plumbing: resolves the repo, gated on engagement; emits the launch block; re-entrancy
 PLUGIN="$(cd "$(dirname "$WATCH")/../../.." && pwd)"

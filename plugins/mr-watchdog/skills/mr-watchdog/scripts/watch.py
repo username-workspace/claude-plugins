@@ -560,6 +560,12 @@ def launch_instruction(repo):
             "verify, and push the fix.")
 
 
+def green_instruction(branch):
+    return ("CI for merge-request branch '" + str(branch) + "' is already GREEN for the current HEAD — "
+            "nothing left to watch. Relay the verdict ('ok, all good — CI green') and continue your "
+            "merge flow if you have one; this hook itself never merges anything.")
+
+
 # --- the background watcher (run_in_background): poll until the pipeline resolves, then exit ---------
 
 def cmd_run(args):
@@ -632,7 +638,9 @@ def mark_watch_requested(repo, head):
 
 def cmd_hook(args):
     """Stop-hook mouthpiece: when this session's branch has an open MR with live CI and we haven't asked
-    yet for this HEAD, emit a `block` telling the session to launch the bg watcher. Else nothing."""
+    yet for this HEAD, emit a `block` telling the session to launch the bg watcher. A pipeline that is
+    already GREEN for the exact HEAD has nothing to watch — the verdict itself is handed over instead
+    (once per HEAD, sha-bound: a stale branch-level green is not a verdict). Else nothing."""
     repo = repo_root(args.repo)
     cfg = load_config(repo, args.config)
     if not cfg.get("enabled", True) or not engaged(repo, cfg, args.session):
@@ -645,6 +653,10 @@ def cmd_hook(args):
         return
     head = head_sha(repo)
     if watch_requested(repo, head):
+        return
+    if ci_status_at(repo, forge, head) == "success":
+        mark_watch_requested(repo, head)
+        print(json.dumps({"decision": "block", "reason": green_instruction(branch)}))
         return
     if ci_status(repo, forge, branch) not in ("pending", "failed"):
         return
