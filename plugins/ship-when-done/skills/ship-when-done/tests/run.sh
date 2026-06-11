@@ -202,6 +202,22 @@ env GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:0
   git -C "$d" commit -q --allow-empty -m "old work from before this session"
 assert_eq "no" "$(eng "$d" S5)" "11g. unbaselined branch, pre-session commits → NOT engaged"
 
+# 11p. INCIDENT parity (#51): session started on a DETACHED HEAD — baseline never ran, the session has
+# NO entry at all; provenance must still claim the mid-turn branch. The carried-path feeds must read
+# git's output verbatim (C-quoting would blind the non-ASCII intersection), and a hand-corrupted
+# provenance file must degrade inert — the gate never tracebacks open.
+d="$ROOT/t11p"; new_repo "$d" --remote
+git -C "$d" checkout -q -b feat-noentry
+echo x > "$d/a.txt"; posttool SP1 "$d/a.txt"
+echo y > "$d/café.txt"; posttool SP2 "$d/café.txt"
+git -C "$d" add -A; git -C "$d" commit -qm "authored this session"
+assert_eq "yes" "$(eng "$d" SP1)" "11p. no session entry at all (detached-HEAD start) → engaged via provenance"
+assert_eq "yes" "$(eng "$d" SP2)" "11p. C-quoted carried path (non-ASCII) intersects verbatim"
+d="$ROOT/t11q"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+echo x > "$d/x.txt"; git -C "$d" add -A; git -C "$d" commit -qm w
+printf 'null' > "$d/.git/swd-provenance.json"
+assert_eq "no" "$(eng "$d" SP3)" "11p. wrong-shape provenance (valid JSON, wrong schema) → inert, never a crash"
+
 # 11i. two concurrent sessions on one repo: each keeps its OWN baseline — the second baseliner
 # must not erase the first session's engagement state (multi-session map, not last-writer-wins)
 d="$ROOT/t11i"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat

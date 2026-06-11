@@ -194,6 +194,37 @@ def write_state(path, data):
         pass
 
 
+def provenance_path(repo):
+    return os.path.join(git_dir(repo), "swd-provenance.json")
+
+
+def provenance_paths(repo, sid):
+    """ship-when-done's observed-edits file — the cross-plugin engagement protocol. Any unexpected
+    shape degrades inert: an engagement gate must never traceback open."""
+    try:
+        st = json.load(open(provenance_path(repo)))
+        return set((st.get("sessions", {}).get(sid) or {}).get("paths", []))
+    except Exception:
+        return set()
+
+
+def carried_paths(repo):
+    """NUL-delimited feeds (-z, raw): C-quoting would break the verbatim intersection with provenance
+    paths, and stripping would eat a worktree-only entry's leading space. In porcelain -z a rename's
+    original path is a bare extra token — skipped (staged or worktree side)."""
+    _, names, _ = run(["git", "diff", "--name-only", "-z",
+                       f"{default_branch(repo, remote_name(repo))}...HEAD"], repo, raw=True)
+    paths = set(filter(None, names.split("\0")))
+    _, porcelain, _ = run(["git", "status", "--porcelain", "-z"], repo, raw=True)
+    toks = iter(porcelain.split("\0"))
+    for t in toks:
+        if len(t) > 3 and t[2] == " ":
+            paths.add(t[3:])
+            if "R" in t[:2] or "C" in t[:2]:
+                next(toks, None)
+    return paths
+
+
 BYPASS_PATTERNS = [
     r"--no-verify",
     r"\|\|\s*true\b",
