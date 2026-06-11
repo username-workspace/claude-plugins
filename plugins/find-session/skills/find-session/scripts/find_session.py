@@ -15,6 +15,7 @@ Override the root with CLAUDE_PROJECTS_DIR. Pure stdlib — works on macOS and L
 import argparse
 import os
 import re
+import shlex
 import sys
 from collections import Counter
 from datetime import datetime
@@ -23,6 +24,7 @@ from pathlib import Path
 PROJECTS = Path(os.environ.get("CLAUDE_PROJECTS_DIR", Path.home() / ".claude" / "projects"))
 TICKET_RE = re.compile(r"[A-Z]{2,}-\d+")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+CWD_RE = re.compile(r'"cwd"\s*:\s*"([^"]+)"')
 
 
 def slug_for(text):
@@ -76,6 +78,29 @@ def scan(dirs, regexes, since):
     return results
 
 
+def session_cwd(transcript):
+    """The session's working directory, recovered from its transcript — `claude --resume <id>` only
+    resolves ids of the project it is launched FROM, so a cross-project resume needs a `cd` first."""
+    last = None
+    try:
+        with transcript.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                m = CWD_RE.search(line)
+                if m:
+                    last = m.group(1)
+    except OSError:
+        return None
+    return last
+
+
+def resume_command(top):
+    cmd = f"claude --resume {top['id']}"
+    if top["project"] == slug_for(Path.cwd()):
+        return cmd
+    cwd = session_cwd(PROJECTS / top["project"] / f"{top['id']}.jsonl")
+    return f"cd {shlex.quote(cwd)} && {cmd}" if cwd else cmd
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=True, description="Find a past Claude Code session.")
     ap.add_argument("concepts", nargs="*", help="one regex per concept; ALL must match")
@@ -122,7 +147,7 @@ def main():
     proj = f"  ·  project {top['project']}" if show_project else ""
     print(f"Best match: {top['id']}")
     print(f"   {top['total']} matching lines · {top['lines']} lines · density {top['density']}/1k · key {top['key']} · last {top['date']}{proj}")
-    print(f"   resume:  claude --resume {top['id']}")
+    print(f"   resume:  {resume_command(top)}")
 
     if len(results) > 1:
         print("\nOther candidates:")

@@ -173,6 +173,21 @@ fs >/dev/null 2>&1; assert_eq 2 "$?" "17. no concept → exit 2"
 out=$(fs '[unclosed'); assert_contains 'invalid concept pattern' "$out" "17. invalid regex → helpful error"
 rm -rf "$PROJECTS"
 
+# 18. cross-project match → the resume command must change directory first: `claude --resume <id>`
+# only resolves ids of the project it is launched from, so the bare command fails as-is
+d="$ROOT/work/t18"; mkdir -p "$d"; cd "$d"
+mkdir -p "$PROJECTS/$(slug_of)"
+OTHER="$PROJECTS/-Users-someone-elsewhere-app"; mkdir -p "$OTHER"
+printf '{"cwd":"/Users/someone/elsewhere/app","text":"stripe webhook retry saga"}\n{"cwd":"/Users/someone/elsewhere/app","text":"stripe webhook retry saga"}\n' > "$OTHER/3f9a1c20-dead-beef-0018-aaaabbbbcccc.jsonl"
+out=$(fs stripe webhook)
+assert_contains 'widened to all projects' "$out" "18. match found by widening"
+assert_contains "cd /Users/someone/elsewhere/app && claude --resume 3f9a1c20-dead-beef-0018-aaaabbbbcccc" "$out" "18. cross-project resume changes directory first"
+HERE="$PROJECTS/$(slug_of)"
+jsonl "$HERE" local-one "stripe webhook retry saga" "stripe webhook retry saga" "stripe webhook retry saga"
+out=$(fs stripe webhook)
+assert_contains 'resume:  claude --resume local-one' "$out" "18. same-project match keeps the bare resume (no cd)"
+rm -rf "$PROJECTS"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 rm -rf "$ROOT"

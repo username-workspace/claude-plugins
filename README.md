@@ -27,7 +27,7 @@ that fails before the fix and passes after it.
 | Plugin | Version | Category | What it does |
 |---|---|---|---|
 | [`claude-remote-spawn`](./plugins/claude-remote-spawn) | 1.2.2 | Agents | Spawn a new Claude Code session remotely, on your own machine. |
-| [`find-session`](./plugins/find-session) | 1.0.1 | Agents | Find and resume the past Claude Code session you're thinking of. |
+| [`find-session`](./plugins/find-session) | 1.0.2 | Agents | Find and resume the past Claude Code session you're thinking of. |
 | [`delivery-metrics`](./plugins/delivery-metrics) | 1.0.6 | Analytics | Turn git history into a developer productivity & quality dashboard. |
 | [`aws-remote-auth`](./plugins/aws-remote-auth) | 1.0.2 | DevOps | Re-authenticate to AWS from anywhere, on demand, with an autofill device code. |
 | [`merge-review`](./plugins/merge-review) | 1.1.1 | DevOps | An adversarial reviewer that scores the diff, fixes what's attested, and loops until it's merge-ready. |
