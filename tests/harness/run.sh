@@ -218,7 +218,7 @@ assert_eq "FULL" "$(sel scripts/readme.py)" "12. impacted: shared script → ful
 assert_eq "FULL" "$(sel .claude-plugin/marketplace.json plugins/find-session/web.json)" "12. impacted: mixed shared+plugin → full"
 assert_eq "plugins/a
 plugins/b" "$(sel plugins/a/x plugins/b/y)" "12. impacted: two plugins → both"
-assert_eq "FULL" "$(sel)" "12. impacted: no changed paths → conservative full"
+assert_eq "FULL" "$(sel </dev/null)" "12. impacted: no changed paths → conservative full"
 assert_eq "plugins/a" "$(printf 'plugins/a/x\nplugins/a/y\n' | python3 "$REPO_ROOT/scripts/impacted.py")" "12. impacted: stdin paths, deduped"
 
 # sandbox repo: --impacted runs exactly the touched plugin's suite + the harness; shared path → full
@@ -262,6 +262,17 @@ assert_eq "a
 b
 h" "$(sort "$RUNLOG")" "12. --impacted: staged rename OUT of scripts/ → FULL (the donor is shared)"
 git -C "$sb" checkout -qf feat 2>/dev/null
+# INCIDENT: a suite that reads stdin ate the gate's suite list — every suite sorting after it was
+# silently skipped (the gate loop shared its stdin with the suites it ran)
+git -C "$sb" checkout -qf main 2>/dev/null
+printf '#!/usr/bin/env bash\ncat >/dev/null\necho a >> "%s"\nexit 0\n' "$RUNLOG" > "$sb/plugins/a/tests/run.sh"
+git -C "$sb" add -A; git -C "$sb" commit -qm "plugin a suite now slurps stdin"
+: > "$RUNLOG"; bash "$sb/scripts/run-tests.sh" >/dev/null 2>&1
+assert_eq "a
+b
+h" "$(sort "$RUNLOG")" "12. a stdin-eating suite can NOT swallow the suites after it"
+git -C "$sb" checkout -qf feat 2>/dev/null
+
 # INCIDENT (review): a failing `git status` was masked by the pipeline's exit status → under-selection
 mkdir -p "$sb/shim"
 printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = status ] && exit 128; done\nexec "%s" "$@"\n' "$(command -v git)" > "$sb/shim/git"

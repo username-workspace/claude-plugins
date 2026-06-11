@@ -380,6 +380,60 @@ def twist_review_loop(tag):
     sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
 
 
+def twist_two_sessions(tag):
+    """Two concurrent sessions on one clone: SB's turn starts mid-SA-delivery — SB's Stop must stay
+    silent, SA's engagement must survive SB's baselines (the v1 multi-session map on a real forge)."""
+    workdir, branch, session, tp = twist_setup(tag, "two-sessions")
+    sa, sb = f"{session}-A", f"{session}-B"
+    baselines(workdir, sa)
+    work(workdir, "feature", "green")
+    sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary", "two sessions",
+        "--type", "feat"], check=True)
+    baselines(workdir, sb)
+    out_b = stop(workdir, sb, tp)
+    expect(out_b == "" and pr_state(branch) is None, "SB (baselined on SA's dirty tree) must not ship",
+           out_b)
+    out = stop(workdir, sa, tp)
+    expect('"decision": "block"' in out, "SA held for review — its engagement survived SB's baseline",
+           out)
+    sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
+    out = stop(workdir, sa, tp, active=True)
+    pr = pr_state(branch)
+    expect(pr is not None and pr["state"] == "OPEN", "SA ships after review; SB never interfered", out)
+    sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
+
+
+def twist_bg_writer(tag):
+    """The original coverage-ledger incident, live: a background process holds a claim on a file it is
+    mid-writing — the delivery ships around it, the half-written ledger never enters a commit."""
+    workdir, branch, session, tp = twist_setup(tag, "bg-writer")
+    baselines(workdir, session)
+    work(workdir, "feature", "green")
+    ledger = os.path.join(workdir, "ledger.json")
+    writer = subprocess.Popen([sys.executable, "-c",
+        "import sys,time; p=sys.argv[1]; open(p,'w').write('{\"partial\":'); time.sleep(120); "
+        "open(p,'w').write('{\"complete\": true}')", ledger])
+    try:
+        sh([sys.executable, SHIP, "claim", "--repo", workdir, "--path", "ledger.json",
+            "--pid", str(writer.pid)], check=True)
+        sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary", "bg writer",
+            "--type", "feat"], check=True)
+        out = stop(workdir, session, tp)
+        expect('"decision": "block"' in out, "delivery held for review with the writer mid-flight", out)
+        _, names, _ = sh(["git", "-C", workdir, "show", "--pretty=", "--name-only", "HEAD"])
+        expect("ledger.json" not in names, "the half-written ledger never entered the commit", names)
+        sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
+        out = stop(workdir, session, tp, active=True)
+        pr = pr_state(branch)
+        expect(pr is not None and pr["state"] == "OPEN", "the delivery shipped around the live writer", out)
+        _, porc, _ = sh(["git", "-C", workdir, "status", "--porcelain"])
+        expect("ledger.json" in porc, "the claimed file stayed in the tree, untouched", porc)
+        sh(["gh", "pr", "close", str(pr["number"]), "--repo", E2E_REPO, "--delete-branch"])
+    finally:
+        writer.terminate()
+        writer.wait()
+
+
 TWISTS = {
     "preexisting-dirty": twist_preexisting_dirty,
     "wip-branch": twist_wip_branch,
@@ -387,6 +441,8 @@ TWISTS = {
     "mr-closed-mid-watch": twist_mr_closed_mid_watch,
     "manual-push-midflow": twist_manual_push_midflow,
     "review-loop": twist_review_loop,
+    "two-sessions": twist_two_sessions,
+    "bg-writer": twist_bg_writer,
 }
 
 
