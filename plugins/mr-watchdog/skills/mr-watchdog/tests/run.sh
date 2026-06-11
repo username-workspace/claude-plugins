@@ -19,6 +19,13 @@ ci="${STUB_CI:-pending}"
 case "$1 $2" in
   "pr view")   echo "{\"state\":\"${STUB_MR_STATE:-OPEN}\"}";;
   "pr checks") case "$ci" in success) echo '[{"bucket":"pass"}]';; failed) echo '[{"bucket":"fail"}]';; pending) echo '[{"bucket":"pending"}]';; none) echo '[]';; esac;;
+  api*check-runs*) echo "$2" >> "${GH_API_LOG:-/dev/null}"
+     case "$ci" in
+       success) echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}';;
+       failed)  echo '{"check_runs":[{"status":"completed","conclusion":"failure"}]}';;
+       pending) echo '{"check_runs":[{"status":"in_progress","conclusion":null}]}';;
+       none)    echo '{"check_runs":[]}';;
+     esac;;
   "run list")  echo '[{"databaseId":1}]';;
   "run view")  echo "JOB FAILED: AssertionError at app.py:7";;
   *) exit 0;;
@@ -138,6 +145,7 @@ assert_contains 'green' "$out" "6. weakened/assert-True test flagged"
 
 # 7. run (the bg watcher): poll until the pipeline resolves, then exit with the verdict (read-only)
 d="$ROOT/run"; new_repo "$d"; before=$(count "$d" HEAD)
+printf '{"poll_interval":1}' > "$d/.mr-watchdog.json"
 out=$(STUB_CI=success python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_contains "ok, all good" "$out" "7. green → the wake word"
 assert_eq 0 "$rc" "7. green → exit 0"
@@ -149,12 +157,34 @@ assert_eq 1 "$rc" "7. red → exit 1 (so the harness re-invokes with a failure)"
 assert_eq "$before" "$(count "$d" HEAD)" "7. READ-ONLY: the watcher made no commit"
 git -C "$d" diff --quiet && ok "7. READ-ONLY: working tree untouched" || ko "7. working tree untouched"
 assert_contains 'no open merge request' "$(STUB_CI=failed STUB_MR_STATE=CLOSED python3 "$WATCH" run --repo "$d" 2>&1)" "7. MR closed → watcher exits, does not watch"
-printf '{"on_red":"notify"}' > "$d/.mr-watchdog.json"
+printf '{"on_red":"notify","poll_interval":1}' > "$d/.mr-watchdog.json"
 out=$(STUB_CI=failed python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
 assert_absent 'ROOT CAUSE' "$out" "7. on_red=notify → no fix directive"
 assert_contains 'CI red' "$out" "7. on_red=notify → passive red report"
 assert_eq 1 "$rc" "7. on_red=notify → still exit 1"
 printf '{}' > "$d/.mr-watchdog.json"
+
+# 7b. the verdict is bound to the WATCHED SHA — a stale branch-level red (previous run, fresh push)
+# must never produce a red verdict while this sha has no registered checks yet
+d="$ROOT/flip"; new_repo "$d"
+printf '{"poll_interval":1}' > "$d/.mr-watchdog.json"
+mkdir -p "$ROOT/flipbin"
+cat > "$ROOT/flipbin/gh" <<FLIPGH
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "pr view") echo '{"state":"OPEN"}';;
+  "pr checks") echo '[{"bucket":"fail"}]';;
+  api*check-runs*) echo "\$2" >> "$ROOT/gh-api.log"
+     if [ -f "$ROOT/flip-done" ]; then echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}'
+     else touch "$ROOT/flip-done"; echo '{"check_runs":[]}'; fi;;
+  *) exit 0;;
+esac
+FLIPGH
+chmod +x "$ROOT/flipbin/gh"; : > "$ROOT/gh-api.log"
+out=$(env PATH="$ROOT/flipbin:$PATH" python3 "$WATCH" run --repo "$d" 2>&1); rc=$?
+assert_eq 0 "$rc" "7b. branch-level stale red + sha not yet registered → green, never a false red"
+assert_contains 'ok, all good' "$out" "7b. the verdict belongs to the watched sha"
+grep -q "$(git -C "$d" rev-parse HEAD)" "$ROOT/gh-api.log" && ok "7b. the status query carries the watched sha" || ko "7b. the status query carries the watched sha"
 
 # 9. engagement: a branch is watched only if THIS session pushed it (no opt-in file needed)
 d="$ROOT/eng"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null

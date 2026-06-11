@@ -23,6 +23,12 @@ A defect found in real usage is fixed **evidence-first**, with the proof-of-fix 
 No fix merges without its incident test. The commit message tells the incident honestly: what was
 seen, the real root cause, how the repro proves the fix.
 
+**Symptom vs root cause — the tell:** a fix that adds *tolerance* (a timeout, a retry, a debounce, a
+wider threshold) treats a symptom — it makes the bug improbable by timing. A root-cause fix adds an
+*invariant* — it makes the bug impossible by construction (only a green gate verdict is ever cached; a
+CI verdict belongs to the exact sha being watched). If the fix could still lose a race, the root cause
+is still out there; and it usually costs nothing, where tolerance always costs latency or noise.
+
 ## Real-usage validation (the hermetic suites cannot cover this)
 
 Hermetic tests idealize composition, environment, time, and state evolution. Two complements:
