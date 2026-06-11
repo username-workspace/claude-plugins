@@ -68,7 +68,7 @@ nato_name(){
 
 usage(){ cat >&2 <<EOF
 usage: driver.sh <spawn|resume|list|stop|check> [args]
-  spawn [name] [--model M]  launch a session; name from context, else NATO (alpha/bravo/charlie…)
+  spawn [name] [--model M] [--prompt 'text']  launch a session; name from context, else NATO; --prompt submits an initial instruction
   resume <id> [name] [--in-place] [--model M]  respawn an existing session by id (forks a fresh id; --in-place=same id)
   list                     list spawned sessions (live/dead)
   stop <name>              stop a session
@@ -87,13 +87,15 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   spawn)
     need_claude; need_script
-    name=""; model=""
+    name=""; model=""; prompt=""
     while [ $# -gt 0 ]; do
       case "$1" in
-        --model)   [ -n "${2:-}" ] || die "--model needs a value (an alias like opus/sonnet/fable, or a full model id)"; model="$2"; shift 2 ;;
-        --model=*) model="${1#--model=}"; shift ;;
-        -*)        die "unknown flag: $1" ;;
-        *)         [ -z "$name" ] && name="$1"; shift ;;
+        --model)    [ -n "${2:-}" ] || die "--model needs a value (an alias like opus/sonnet/fable, or a full model id)"; model="$2"; shift 2 ;;
+        --model=*)  model="${1#--model=}"; shift ;;
+        --prompt)   [ -n "${2:-}" ] || die "--prompt needs a value (the initial instruction submitted to the session)"; prompt="$2"; shift 2 ;;
+        --prompt=*) prompt="${1#--prompt=}"; shift ;;
+        -*)         die "unknown flag: $1" ;;
+        *)          [ -z "$name" ] && name="$1"; shift ;;
       esac
     done
     # names become file paths and pkill patterns — only ever use the slugified form
@@ -102,7 +104,8 @@ case "$cmd" in
     [ -e "$STATE_DIR/$name.spawn" ] && die "session '$name' already exists (stop it first)"
     cwd="${CRS_SPAWN_CWD:-$PWD}"
     model_args=(); [ -n "$model" ] && model_args=(--model "$model")
-    launch_session "$name" "$cwd" -n "$name" ${model_args[@]+"${model_args[@]}"}
+    prompt_args=(); [ -n "$prompt" ] && prompt_args=("$prompt")
+    launch_session "$name" "$cwd" -n "$name" ${model_args[@]+"${model_args[@]}"} ${prompt_args[@]+"${prompt_args[@]}"}
     [ -n "$model" ] && echo "model=$model" >>"$STATE_DIR/$name.spawn"
     echo "$name"
     echo "spawned '$name'${model:+ (model: $model)} in $cwd — visible in Claude Code Remote Control (phone/desktop) + 'claude agents'. (cwd must be TRUSTED.)" >&2

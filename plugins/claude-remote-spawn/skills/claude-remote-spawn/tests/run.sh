@@ -180,6 +180,20 @@ sp="$(sed -n 's/^subshell=//p' "$STATE/modeltest.spawn" 2>/dev/null | head -1)"
 [ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
 run stop modeltest >/dev/null 2>&1 || true
 
+# 18b. spawn --prompt '<text>' hands the initial instruction to claude as the trailing positional
+: > "$ROOT/script.cap"
+out=$(run spawn promptest --prompt "executetheplan42 phase by phase")
+for _ in $(seq 1 50); do [ -s "$ROOT/script.cap" ] && break; sleep 0.1; done
+# multi-word prompt exercises the real path; the asserted token survives %q on the Linux branch
+assert_contains "executetheplan42" "$(cat "$ROOT/script.cap" 2>/dev/null)" "18b. --prompt passed through to claude"
+sp="$(sed -n 's/^subshell=//p' "$STATE/promptest.spawn" 2>/dev/null | head -1)"
+[ -n "$sp" ] && { pkill -P "$sp" 2>/dev/null; kill "$sp" 2>/dev/null; }
+run stop promptest >/dev/null 2>&1 || true
+out=$(run_rc spawn --prompt)
+rc="${out##*$'\n'}"; body="${out%$'\n'*}"
+assert_eq 1 "$rc" "18b. spawn --prompt (no value) → exit 1"
+assert_contains "--prompt needs a value" "$body" "18b. spawn --prompt (no value) → clear message"
+
 # 19. spawn without --model passes NO --model flag (default model)
 : > "$ROOT/script.cap"
 out=$(run spawn nomodel)
