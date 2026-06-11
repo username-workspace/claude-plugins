@@ -18,7 +18,7 @@ for `--dangerously-skip-permissions`, or `CRS_HEADLESS_PERM_FLAGS` for an exact 
 
 | Subcommand | Effect |
 |---|---|
-| `spawn [name] [--model M]` | Launch a **persistent, visible** session; name from context (else NATO: alpha/bravo/charlie…) |
+| `spawn [name] [--model M] [--prompt 'text']` | Launch a **persistent, visible** session; name from context (else NATO: alpha/bravo/charlie…). `--prompt` submits an initial instruction, so the session starts working unattended |
 | `resume <id> [name] [--in-place] [--model M]` | Respawn an **existing** session by id; forks a fresh drivable id by default (`--in-place` = same id) |
 | `list` | List spawned sessions (live/dead, with the model if one was set) |
 | `stop <name>` | Stop a session (kills the PTY + claude, cleans state) |
