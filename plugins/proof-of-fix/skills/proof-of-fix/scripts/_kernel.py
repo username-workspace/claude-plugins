@@ -197,8 +197,9 @@ def write_state(path, data):
 def auto_engage():
     """Engagement mode switch. Default (explicit): plugins act only on explicit protocol artifacts —
     the done-marker, ship's handoff stamp. HARNESS_AUTO_ENGAGE=1 restores inferred engagement
-    (baseline deltas, provenance ∩ branch content, upstream advance)."""
-    return os.environ.get("HARNESS_AUTO_ENGAGE", "").lower() not in ("", "0", "false")
+    (baseline deltas, provenance ∩ branch content, upstream advance). Truthy allowlist: the truthy
+    side takes autonomous actions, so an unrecognized value must mean OFF."""
+    return os.environ.get("HARNESS_AUTO_ENGAGE", "").lower() in ("1", "true")
 
 
 def marker_path(repo):
@@ -217,9 +218,11 @@ def read_marker(repo):
 
 def marker_for_branch(repo, branch):
     """ship-when-done's explicit 'this delivery is ready' declaration — the cross-plugin signal the
-    explicit mode acts on. Inert when the sibling is absent."""
+    explicit mode acts on. STRICT branch match: a corrupt or branch-less marker is inert here (never
+    a wildcard engagement); only evaluate_completion keeps the tolerant read, on an already-engaged
+    branch. Inert when the sibling is absent."""
     m = read_marker(repo)
-    return bool(m and (not m.get("branch") or m.get("branch") == branch))
+    return bool(m and m.get("branch") == branch)
 
 
 def provenance_path(repo):

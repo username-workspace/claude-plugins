@@ -5,8 +5,9 @@ description: >-
   MAIN session owns — read-only: it never commits, pushes, or merges. The watcher is launched with
   run_in_background and tracked by the harness, which re-invokes your session the moment it resolves, so
   the verdict reaches you IN the conversation: green → "ok, all good"; red → the failing job log so your
-  session fixes the *root cause* (no bypass), with `verify` to self-check the fix for fake-green. Engages
-  only a branch THIS session pushed; opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab).
+  session fixes the *root cause* (no bypass), with `verify` to self-check the fix for fake-green. Engaged
+  via ship-when-done's handoff by default (HARNESS_AUTO_ENGAGE=1 also engages a branch THIS session
+  pushed); opt out per repo. Forge-agnostic (GitHub via gh, GitLab via glab).
   The CI-watch step after ship-when-done → merge-review.
 ---
 
@@ -82,10 +83,10 @@ python3 scripts/watch.py verify --repo .
 
 ## Enable & configure
 
-No config is required — it engages on its own. Drop a `.mr-watchdog.json` only to tune it or opt out:
+No config is required. Drop a `.mr-watchdog.json` only to tune it or opt out:
 ```jsonc
 {
-  "enabled": true,         // set false to opt this repo OUT (engagement is otherwise automatic)
+  "enabled": true,         // set false to opt this repo OUT (either engagement mode)
   "on_red": "fix",         // fix (hand the failure to your session to fix) | notify (just report it)
   "forge": null,           // github | gitlab — auto-detected from the remote unless set
   "poll_interval": 30,     // seconds between CI polls

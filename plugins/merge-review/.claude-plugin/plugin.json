@@ -1,7 +1,7 @@
 {
   "name": "merge-review",
-  "version": "1.4.0",
-  "description": "Adversarial merge-readiness review that scores a diff 0-100 across security, correctness, quality and maintainability, and runs iteratively until the score clears the threshold. Two outcome modes: LOCAL (interactive) re-derives each finding, applies the attested ones (high-confidence, file:line-cited) as minimal root-cause fixes and loops until viable — contestable pure-logic findings are surfaced, never silently applied; REMOTE (diff injected by a runner) is strictly read-only and just emits the verdict + machine-readable state. Forge-agnostic context (GitHub via gh, GitLab via glab). Self-engaging & session-scoped: a pre-push gate reviews the branch THIS session is about to push (never a stale or someone else's branch); opt out per repo. The review step between ship-when-done and mr-watchdog.",
+  "version": "2.0.0",
+  "description": "Adversarial merge-readiness review that scores a diff 0-100 across security, correctness, quality and maintainability, and runs iteratively until the score clears the threshold. Two outcome modes: LOCAL (interactive) re-derives each finding, applies the attested ones (high-confidence, file:line-cited) as minimal root-cause fixes and loops until viable — contestable pure-logic findings are surfaced, never silently applied; REMOTE (diff injected by a runner) is strictly read-only and just emits the verdict + machine-readable state. Forge-agnostic context (GitHub via gh, GitLab via glab). A pre-push gate armed while a declared delivery is in flight (default) — or, with HARNESS_AUTO_ENGAGE=1, session-scoped: the branch THIS session produced work on; opt out per repo. The review step between ship-when-done and mr-watchdog.",
   "author": {
     "name": "Username",
     "email": "admin@username.digital"

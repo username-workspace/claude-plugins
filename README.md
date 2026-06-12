@@ -35,10 +35,10 @@ its own.
 | [`find-session`](./plugins/find-session) | 1.0.4 | Agents | Find and resume the past Claude Code session you're thinking of. |
 | [`delivery-metrics`](./plugins/delivery-metrics) | 1.0.6 | Analytics | Turn git history into a developer productivity & quality dashboard. |
 | [`aws-remote-auth`](./plugins/aws-remote-auth) | 1.0.3 | DevOps | Re-authenticate to AWS from anywhere, on demand, with an autofill device code. |
-| [`mr-watchdog`](./plugins/mr-watchdog) | 2.4.0 | DevOps | Open a merge request, then forget it — a background watcher follows its CI and hands the verdict back to your session. |
-| [`ship-when-done`](./plugins/ship-when-done) | 1.7.0 | DevOps | Commit at each milestone, push so nothing is lost, open the PR when it's actually done. |
+| [`mr-watchdog`](./plugins/mr-watchdog) | 3.0.0 | DevOps | Open a merge request, then forget it — a background watcher follows its CI and hands the verdict back to your session. |
+| [`ship-when-done`](./plugins/ship-when-done) | 2.0.0 | DevOps | Commit at each milestone, push so nothing is lost, open the PR when it's actually done. |
 | [`coding-agent-usage`](./plugins/coding-agent-usage) | 1.2.1 | FinOps | See your AI coding-agent usage — and where you rank against other developers. |
-| [`merge-review`](./plugins/merge-review) | 1.4.0 | Quality | An adversarial reviewer that scores the diff, fixes what's attested, and loops until it's merge-ready. |
+| [`merge-review`](./plugins/merge-review) | 2.0.0 | Quality | An adversarial reviewer that scores the diff, fixes what's attested, and loops until it's merge-ready. |
 | [`proof-of-fix`](./plugins/proof-of-fix) | 1.0.4 | Quality | Prove the bug before fixing it — then prove the fix with the same probe. Red before, green after. |
 | [`security-audit`](./plugins/security-audit) | 1.3.3 | Security | One Trivy scan, every ecosystem — a prioritised security report. |
 <!-- plugins:end -->

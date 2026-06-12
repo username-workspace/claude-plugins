@@ -19,7 +19,7 @@ from _kernel import (added_lines, bypass_in_diff,  # unused here: re-exported, t
                      git_dir, head_sha, remote_name, repo_root, run, write_json)
 
 DEFAULTS = {
-    "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
+    "enabled": True,          # set false to opt a repo OUT (either engagement mode)
     "forge": None,            # github | gitlab; auto-detected from the remote if null
     "poll_interval": 30,      # seconds between CI polls
     "log_lines": 200,         # failing-log lines carried into the handoff

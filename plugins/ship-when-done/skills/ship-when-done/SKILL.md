@@ -6,10 +6,11 @@ description: >-
   checklist derived from the initiating goal is satisfied AND the project's quality gate is actually
   green. Forge-agnostic (GitHub, GitLab, Bitbucket): uses gh/glab if present, else GitLab push
   options, else surfaces the PR-creation URL — no CLI dependency. Branch-first; never commits or
-  pushes the default branch; never merges; no AI attribution. Engages on its own only on work THIS
-  session produced (never a pre-existing dirty tree); opt out per repo. Use when you want the agent to
-  commit/push/open-PR on its own instead of being asked each time. Horizontal: any repo with a remote
-  and a detectable gate.
+  pushes the default branch; never merges; no AI attribution. Explicit by default: it acts only on a
+  declared done-marker (mark-done); HARNESS_AUTO_ENGAGE=1 lets it engage on its own on work THIS
+  session produced (never a pre-existing dirty tree); opt out per repo. Use when you want the
+  commit/push/open-PR mechanics handled for you — deterministically by default, autonomously with the
+  env var. Horizontal: any repo with a remote and a detectable gate.
 ---
 
 # ship-when-done
@@ -82,7 +83,7 @@ To plug an independent judge, set `judge_command` (your own command) — off by 
 - **No AI attribution** in commit messages.
 - **`wip/` escape hatch** — a branch whose name starts with `skip_marker` is left untouched.
 
-## Configure (optional — it engages on its own)
+## Configure (optional)
 
 No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
 > 🔒 `gate` and `judge_command` are shell commands run on **every** engaged turn, so they are **never
@@ -95,7 +96,7 @@ fast while CI stays on the full run — e.g. a multi-suite repo:
 `printf '{"gate":"bash scripts/run-tests.sh --impacted"}' > "$(git rev-parse --git-dir)/ship-when-done.json"`.
 ```jsonc
 {
-  "enabled": true,              // set false to opt this repo OUT (engagement is otherwise automatic)
+  "enabled": true,              // set false to opt this repo OUT (either engagement mode)
   "on_done": "draft-pr",        // draft-pr (default) | ready-pr | suggest
   "gate": null,                  // auto-detected (pnpm/bun/yarn/npm scripts, composer test, pytest, go test, cargo test, make test) unless set — .git/ or --config only
   "ticket_pattern": "\\b([A-Z][A-Z0-9]+-\\d+)\\b",

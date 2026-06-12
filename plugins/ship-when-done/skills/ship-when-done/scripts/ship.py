@@ -26,7 +26,7 @@ DEFAULTS = {
     "forge": None,                    # github | gitlab | bitbucket; auto-detected from the remote if null
     "goal": "",
     "default_base": None,
-    "enabled": True,                  # set false to opt a repo OUT (engagement is otherwise automatic)
+    "enabled": True,                  # set false to opt a repo OUT (either engagement mode)
     "respect_merge_review": True,     # hold the PR until a sibling merge-review gate passes (if present)
     "gate_timeout": 120,              # seconds before a gate run is declared timed out (never cached)
 }
@@ -867,8 +867,13 @@ def cmd_engage(args):
 
 def cmd_mark_done(args):
     repo = os.path.abspath(args.repo)
+    branch = cur_branch(repo)
+    if not branch:
+        print("[ship-when-done] ✗ mark-done refused: detached HEAD — a declaration is branch-scoped, "
+              "check out (or create) the branch first")
+        sys.exit(1)
     data = {"done": True, "summary": (args.summary or "").strip()[:72], "type": args.type,
-            "branch": cur_branch(repo)}
+            "branch": branch}
     p = marker_path(repo)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     write_json(p, data)

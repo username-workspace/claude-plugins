@@ -17,7 +17,7 @@ from _kernel import (auto_engage, carried_paths, cmd_resolve, cur_branch, defaul
                      repo_root, run, write_json)
 
 DEFAULTS = {
-    "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
+    "enabled": True,          # set false to opt a repo OUT (either engagement mode)
     "threshold": 80,          # score at/above which the diff is merge-ready
     "auto_fix": True,         # local mode: apply attested findings and loop until viable
     "prepush_gate": True,     # gate `git push` of a branch this session produced until reviewed

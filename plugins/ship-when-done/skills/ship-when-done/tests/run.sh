@@ -669,6 +669,14 @@ assert_eq "no" "$(expl "$d" SE)" "EXP. another branch's marker does not engage t
 git -C "$d" checkout -q feat
 assert_eq "yes" "$(env -u HARNESS_AUTO_ENGAGE python3 "$SHIP" engaged --repo "$d" --session ANY)" \
   "EXP. the declaration is the signal — session identity is not inferred"
+echo 'NOT JSON{{{' > "$d/.git/swd-done.json"
+assert_eq "no" "$(expl "$d" SE)" "EXP. corrupt marker → inert, never a wildcard engagement"
+d="$ROOT/texp2"; new_repo "$d" --remote
+git -C "$d" checkout -q --detach HEAD
+python3 "$SHIP" mark-done --repo "$d" --summary x >/dev/null 2>&1 \
+  && ko "EXP. mark-done refuses a detached HEAD (a branch-less declaration is no declaration)" \
+  || ok "EXP. mark-done refuses a detached HEAD (a branch-less declaration is no declaration)"
+[ -f "$d/.git/swd-done.json" ] && ko "EXP. no marker written on detached HEAD" || ok "EXP. no marker written on detached HEAD"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"
