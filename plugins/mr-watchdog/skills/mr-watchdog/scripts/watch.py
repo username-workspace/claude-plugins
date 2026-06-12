@@ -15,8 +15,8 @@ from shutil import which
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _kernel
 from _kernel import (added_lines, bypass_in_diff,  # unused here: re-exported, the suite's pure tests call them
-                     cmd_resolve, cur_branch, default_branch, detect_forge, fake_green, git_dir, head_sha,
-                     remote_name, repo_root, run, write_json)
+                     auto_engage, cmd_resolve, cur_branch, default_branch, detect_forge, fake_green,
+                     git_dir, head_sha, remote_name, repo_root, run, write_json)
 
 DEFAULTS = {
     "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
@@ -215,8 +215,10 @@ def cmd_baseline(args):
 
 
 def engaged(repo, cfg, session):
-    """True if THIS session is responsible for the current branch's pipeline — i.e. it pushed it (the
-    branch's @{u} advanced since this session's baseline). `enabled: false` opts a repo out."""
+    """True if THIS session is responsible for the current branch's pipeline. Explicit mode (default):
+    only via the stamp ship-when-done writes when IT pushes (the handoff). HARNESS_AUTO_ENGAGE=1:
+    also inferred — the branch's @{u} advanced since this session's baseline. `enabled: false` opts a
+    repo out."""
     if not cfg.get("enabled", True):
         return False
     branch = feature_branch(repo, cfg)
@@ -231,6 +233,8 @@ def engaged(repo, cfg, session):
         return False
     if entry.get("engaged"):
         return True
+    if not auto_engage():
+        return False
     if upstream_sha(repo) != (entry.get("base") or ""):
         entry["engaged"] = True
         write_sessions(repo, st)

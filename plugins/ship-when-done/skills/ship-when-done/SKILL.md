@@ -20,12 +20,18 @@ agent does — gated on **real signals**, not the model's self-confidence.
 ## How it fires
 
 It registers a **`Stop` hook** (end of an agent turn — `hooks/hooks.json` → `hooks/stop-hook.py` →
-`scripts/ship.py engage`). It **engages itself** — no opt-in file, no env var. A companion
-`UserPromptSubmit` hook stamps HEAD + the dirty set at the start of each turn; it acts **only if THIS
-session produced the work** (HEAD advanced or the tree changed since that baseline), so it never
-sweeps up a **pre-existing dirty tree** you didn't touch, or auto-mutates a repo you're just visiting.
-Opt a repo **out** with `{ "enabled": false }` in `.ship-when-done.json`. When engaged, it still acts
-only if there is work in flight (uncommitted changes or unshipped commits).
+`scripts/ship.py engage`). **Two engagement modes:**
+
+- **Explicit (the default)** — fully deterministic: the Stop hook acts **only when a done-marker was
+  declared for the current branch** (`mark-done`, below). No declaration → no action, ever. The
+  companion hooks still *record* (baselines, provenance) but never decide anything.
+- **Auto (`HARNESS_AUTO_ENGAGE=1` in the environment)** — it engages itself: it acts when **THIS
+  session produced the work** (HEAD or tree advanced since the turn-start baseline, or the branch
+  carries paths this session observably edited), so it never sweeps up a pre-existing dirty tree or
+  a repo you're just visiting.
+
+Opt a repo **out** entirely with `{ "enabled": false }` in `.ship-when-done.json`. When engaged, it
+still acts only if there is work in flight (uncommitted changes or unshipped commits).
 
 ## The autonomy ladder
 

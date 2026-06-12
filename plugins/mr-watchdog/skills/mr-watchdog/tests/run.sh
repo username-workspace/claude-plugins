@@ -7,6 +7,7 @@ WATCH="$SCRIPTS/watch.py"
 ROOT="$(mktemp -d)"; PASS=0; FAIL=0
 
 . "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
+export HARNESS_AUTO_ENGAGE=1   # this suite pins the AUTO lanes; the explicit default is pinned in its own block
 
 mkdir -p "$ROOT/bin"
 cat > "$ROOT/bin/gh" <<'EOF'
@@ -267,5 +268,16 @@ rtp="$ROOT/r13.jsonl"; printf '{"type":"assistant","message":{"role":"assistant"
 assert_eq "$rtop" "$(python3 "$WATCH" resolve --cwd "$rnr" --transcript "$rtp")" "13. resolve: transcript last-edit → its repo root"
 python3 "$WATCH" baseline --repo "$rsub" --session s1
 [ -f "$rtop/.git/mr-watchdog-session.json" ] && ok "13. root-anchor: baseline from subdir → state at repo root" || ko "13. root-anchor subdir"
+
+# 14. EXPLICIT MODE (the default — HARNESS_AUTO_ENGAGE unset): upstream-advance inference is off;
+# only ship-when-done's handoff stamp engages the watcher.
+d="$ROOT/exp"; new_repo "$d"; git -C "$d" push -q -u origin feat 2>/dev/null
+python3 "$WATCH" baseline --repo "$d" --session SX >/dev/null
+echo z > "$d/z"; git -C "$d" add -A; git -C "$d" -c commit.gpgsign=false commit -qm w; git -C "$d" push -q origin feat 2>/dev/null
+assert_eq "no" "$(env -u HARNESS_AUTO_ENGAGE python3 "$WATCH" engaged --repo "$d" --session SX)" \
+  "14. pushed-since-baseline inference → OFF by default"
+printf '{"v":1,"sessions":{"SX":{"started":"2030-01-01T00:00:00+00:00","branches":{"feat":{"engaged":true}}}}}' > "$d/.git/mr-watchdog-session.json"
+assert_eq "yes" "$(env -u HARNESS_AUTO_ENGAGE python3 "$WATCH" engaged --repo "$d" --session SX)" \
+  "14. ship's handoff stamp → engaged regardless of mode"
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

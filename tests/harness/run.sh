@@ -15,6 +15,7 @@ SHIP_PLUGIN="$REPO_ROOT/plugins/ship-when-done"
 GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"
 
 . "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
+export HARNESS_AUTO_ENGAGE=1   # this suite pins the AUTO lanes; the explicit default is pinned in its own block
 
 mkdir -p "$ROOT/bin"
 cat > "$ROOT/bin/gh" <<EOF
@@ -316,5 +317,32 @@ assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s14)" \
   "14. worktree-only edit (leading-space porcelain line) is carried evidence too"
 assert_eq "yes" "$(python3 "$REVIEW" engaged --repo "$d" --session s-qd)" \
   "14. untracked non-ASCII path (porcelain C-quotes it) is carried evidence too"
+
+# --- 15. EXPLICIT MODE (the default — HARNESS_AUTO_ENGAGE unset): a DECLARED single-shot delivery
+# flows through the whole pipeline exactly like AUTO. The prompt hooks still RECORD (presence files
+# the siblings couple on — the review hold, the watcher handoff); engagement itself is never inferred,
+# it comes from the mark-done declaration alone.
+dE="$ROOT/bexp"; new_repo "$dE" --remote
+printf '{"gate":"true"}' > "$dE/.git/ship-when-done.json"
+prompt_baselines "$dE" se
+echo gizmo > "$dE/gizmo.txt"
+python3 "$SHIP" mark-done --repo "$dE" --summary "ship the gizmo" --type feat >/dev/null
+beforeE=$(pr_creates)
+outE=$(stop_payload "$dE" se "$tp" false | env -u HARNESS_AUTO_ENGAGE CLAUDE_PLUGIN_ROOT="$SHIP_PLUGIN" python3 "$SHIP_HOOK")
+assert_contains '"decision": "block"' "$outE" "15. declared delivery → Stop blocks for the review (engagement from the declaration alone)"
+assert_eq "$beforeE" "$(pr_creates)" "15. no PR before the review"
+python3 "$REVIEW" record --repo "$dE" --score 95 --passed >/dev/null
+outE2=$(stop_payload "$dE" se "$tp" true | env -u HARNESS_AUTO_ENGAGE CLAUDE_PLUGIN_ROOT="$SHIP_PLUGIN" python3 "$SHIP_HOOK")
+git -C "$dE.git" rev-parse --verify -q zv-9-work >/dev/null && ok "15. reviewed → pushed" || ko "15. reviewed → pushed"
+assert_eq "$((beforeE + 1))" "$(pr_creates)" "15. PR opened after the review"
+assert_eq "yes" "$(env -u HARNESS_AUTO_ENGAGE python3 "$WATCH" engaged --repo "$dE" --session se)" \
+  "15. watchdog engaged via ship's handoff stamp — no inference"
+dF="$ROOT/bexp2"; new_repo "$dF" --remote; git -C "$dF" checkout -q -b feat
+echo w > "$dF/w.txt"; git -C "$dF" add -A; git -C "$dF" commit -qm w
+assert_eq "no" "$(env -u HARNESS_AUTO_ENGAGE python3 "$REVIEW" engaged --repo "$dF" --session sf)" \
+  "15. no declaration → a manual push is never gated by default"
+python3 "$SHIP" mark-done --repo "$dF" --summary w >/dev/null
+assert_eq "yes" "$(env -u HARNESS_AUTO_ENGAGE python3 "$REVIEW" engaged --repo "$dF" --session sf)" \
+  "15. declared delivery in flight → the pre-push gate arms"
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; rm -rf "$ROOT"; [ "$FAIL" -eq 0 ]

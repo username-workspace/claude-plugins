@@ -35,7 +35,7 @@ while IFS= read -r s; do
   found=$((found + 1))
   rel="${s#"$ROOT"/}"
   # </dev/null: the loop's stdin is the suite list — a suite that reads stdin must never eat it
-  if env -u CLAUDE_PLUGIN_ROOT -u SHIP_WHEN_DONE_EVAL bash "$s" >"$LOG" 2>&1 </dev/null; then
+  if env -u CLAUDE_PLUGIN_ROOT -u SHIP_WHEN_DONE_EVAL -u HARNESS_AUTO_ENGAGE bash "$s" >"$LOG" 2>&1 </dev/null; then
     printf '\033[32m✓\033[0m %-64s %s\n' "$rel" "$(grep -oE 'PASS=[0-9]+ FAIL=[0-9]+' "$LOG" | tail -1)"
   else
     printf '\033[31m✗ %s\033[0m\n' "$rel"

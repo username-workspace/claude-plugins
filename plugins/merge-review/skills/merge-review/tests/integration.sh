@@ -9,6 +9,7 @@ RV="$PLUGIN/skills/merge-review/scripts/review.py"
 PY="$(command -v python3)"
 ROOT="$(mktemp -d)"; PASS=0; FAIL=0
 . "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
+export HARNESS_AUTO_ENGAGE=1   # this suite pins the AUTO lanes; the explicit default is pinned in its own block
 export CLAUDE_PLUGIN_ROOT="$PLUGIN"
 
 mkrepo(){ d="$1"; mkdir -p "$d"; git -C "$d" init -q -b main

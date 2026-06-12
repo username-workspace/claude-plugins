@@ -29,6 +29,7 @@ chmod +x "$ROOT/bin/gh"
 export PATH="$ROOT/bin:$PATH"
 
 . "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
+export HARNESS_AUTO_ENGAGE=1   # this suite pins the AUTO lanes; the explicit default is pinned in its own block
 
 new_repo(){ # $1=dir  [$2=--remote]  [$3=forge-host, default github.com]
   local d="$1" host="${3:-github.com}"; mkdir -p "$d"; git -C "$d" init -q -b main
@@ -653,6 +654,21 @@ assert_eq 5 "$n" "38b. unconverged review loop stays capped at 5 nudges (never a
 
 # FINAL GUARDRAIL: gh pr merge must NEVER have been called in any scenario
 assert_absent 'MERGE-CALLED' "$(cat "$GH_LOG")" "GUARDRAIL: never auto-merged"
+
+# --- EXPLICIT MODE (the default — HARNESS_AUTO_ENGAGE unset): zero inference; the ladder acts only
+# on a declared done-marker, and the declaration is branch-scoped.
+expl(){ env -u HARNESS_AUTO_ENGAGE python3 "$SHIP" engaged --repo "$1" --session "$2"; }
+d="$ROOT/texp"; new_repo "$d" --remote; git -C "$d" checkout -q -b feat
+env -u SHIP_WHEN_DONE python3 "$SHIP" baseline --repo "$d" --session SE >/dev/null
+echo x > "$d/a.txt"
+assert_eq "no" "$(expl "$d" SE)" "EXP. baseline + fresh work but no declaration → NOT engaged by default"
+python3 "$SHIP" mark-done --repo "$d" --summary "explicit delivery" >/dev/null
+assert_eq "yes" "$(expl "$d" SE)" "EXP. declared done-marker → engaged"
+git -C "$d" checkout -q -b other 2>/dev/null
+assert_eq "no" "$(expl "$d" SE)" "EXP. another branch's marker does not engage this one"
+git -C "$d" checkout -q feat
+assert_eq "yes" "$(env -u HARNESS_AUTO_ENGAGE python3 "$SHIP" engaged --repo "$d" --session ANY)" \
+  "EXP. the declaration is the signal — session identity is not inferred"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

@@ -33,10 +33,12 @@ so it emits a **`block`** asking your session to launch the watcher in the backg
 python3 scripts/watch.py run --repo <repo>   # launch with run_in_background=true, then carry on
 ```
 
-You launch it once (the nudge is dedup'd per pipeline HEAD). A companion `UserPromptSubmit` hook stamps
-the branch's pushed state at the start of each turn so engagement only ever covers a branch **this
-session actually pushed** (its `@{u}` advanced) — a stale MR or someone else's MR is never touched. Opt a
-repo **out** with `{ "enabled": false }` in `.mr-watchdog.json`.
+You launch it once (the nudge is dedup'd per pipeline HEAD). **Two engagement modes:** by default
+(explicit), only the handoff stamp ship-when-done writes when **it** pushes engages the watcher — fully
+deterministic. With `HARNESS_AUTO_ENGAGE=1` in the environment, engagement is also inferred: a companion
+`UserPromptSubmit` hook stamps the branch's pushed state at the start of each turn, and a branch **this
+session actually pushed** (its `@{u}` advanced) is engaged too. Either way a stale MR or someone else's
+MR is never touched. Opt a repo **out** with `{ "enabled": false }` in `.mr-watchdog.json`.
 
 ## The watcher (`run`) — poll until resolved, then exit
 

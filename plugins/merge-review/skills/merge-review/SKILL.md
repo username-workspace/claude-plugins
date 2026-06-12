@@ -208,6 +208,8 @@ When `auto_fix` is on and the score is below threshold, **drive the diff to read
 
 This is what the pre-push gate asks for: it denies the **first** push of an unreviewed HEAD and asks for this review — advisory, once per HEAD: a retried push at the same HEAD goes through, so it nudges without ever walling a push. A clean review records the pass and subsequent pushes are not challenged.
 
+**Gate engagement modes**: by default (explicit), the gate arms only while a **declared delivery is in flight** on the branch — ship-when-done's done-marker (inert when that sibling is absent). With `HARNESS_AUTO_ENGAGE=1` in the environment, engagement is inferred instead: any branch **this session produced work on** (baseline delta or ship-when-done provenance) is gated.
+
 ---
 
 ## OUTPUT FORMAT

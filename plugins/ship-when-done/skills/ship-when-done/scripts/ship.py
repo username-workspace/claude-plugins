@@ -11,8 +11,9 @@ from shutil import which
 from urllib.parse import quote
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _kernel
-from _kernel import (carried_paths, cmd_resolve, cur_branch, git_dir, git_toplevel, provenance_path,
-                     provenance_paths, remote_name, repo_root, run, write_json)
+from _kernel import (auto_engage, carried_paths, cmd_resolve, cur_branch, git_dir, git_toplevel,
+                     marker_for_branch, marker_path, provenance_path, provenance_paths, read_marker,
+                     remote_name, repo_root, run, write_json)
 
 DEFAULTS = {
     "on_done": "draft-pr",            # draft-pr | ready-pr | suggest
@@ -503,20 +504,6 @@ def run_ladder(state, verdict, gate, cfg):
     return res
 
 
-def marker_path(repo):
-    return os.path.join(git_dir(repo), "swd-done.json")          # inside .git → never committed
-
-
-def read_marker(repo):
-    p = marker_path(repo)
-    if os.path.isfile(p):
-        try:
-            return json.load(open(p))
-        except Exception:
-            return {"done": True}
-    return None
-
-
 def clear_marker(repo):
     try:
         os.remove(marker_path(repo))
@@ -673,14 +660,17 @@ def cmd_baseline(args):
 
 
 def engaged(repo, cfg, session):
-    """True if THIS session produced work on the current branch — HEAD advanced or the tree changed
-    since this session's baseline, or the branch carries paths this session observably edited
-    (PostToolUse provenance). `enabled: false` opts a repo out."""
+    """Explicit mode (default): True only when a done-marker was declared for this branch (mark-done).
+    HARNESS_AUTO_ENGAGE=1: True if THIS session produced work on the current branch — HEAD advanced
+    or the tree changed since this session's baseline, or the branch carries paths this session
+    observably edited (PostToolUse provenance). `enabled: false` opts a repo out."""
     if not cfg.get("enabled", True):
         return False
     branch = cur_branch(repo)
     if not branch:
         return False
+    if not auto_engage():
+        return marker_for_branch(repo, branch)
     st = read_sessions(repo)
     sess = st["sessions"].get(session)
     entry = (sess or {}).get("branches", {}).get(branch)

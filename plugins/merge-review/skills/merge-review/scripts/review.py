@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from shutil import which
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _kernel
-from _kernel import (carried_paths, cmd_resolve, cur_branch, default_branch, detect_forge, fake_green,
-                     git_dir, head_sha, provenance_paths, remote_name, repo_root, run, write_json)
+from _kernel import (auto_engage, carried_paths, cmd_resolve, cur_branch, default_branch, detect_forge,
+                     fake_green, git_dir, head_sha, marker_for_branch, provenance_paths, remote_name,
+                     repo_root, run, write_json)
 
 DEFAULTS = {
     "enabled": True,          # set false to opt a repo OUT (engagement is otherwise automatic)
@@ -109,16 +110,19 @@ def cmd_baseline(args):
 
 
 def engaged(repo, cfg, session):
-    """True if THIS session produced work on the current feature branch — HEAD advanced or the tree
-    changed since this session's baseline, or the branch carries paths this session observably edited
-    (ship-when-done provenance, inert when the sibling is absent). The provenance lane needs no
-    baseline at all — a branch created mid-turn, or a session started on a detached HEAD, has none.
-    `enabled: false` opts a repo out."""
+    """Explicit mode (default): True only while a declared delivery is in flight on this branch —
+    ship-when-done's done-marker (inert when the sibling is absent). HARNESS_AUTO_ENGAGE=1: True if
+    THIS session produced work on the current feature branch — HEAD advanced or the tree changed
+    since this session's baseline, or the branch carries paths this session observably edited
+    (ship-when-done provenance). The provenance lane needs no baseline at all — a branch created
+    mid-turn, or a session started on a detached HEAD, has none. `enabled: false` opts a repo out."""
     if not cfg.get("enabled", True):
         return False
     branch = feature_branch(repo, cfg)
     if not branch:
         return False
+    if not auto_engage():
+        return marker_for_branch(repo, branch)
     st = read_sessions(repo)
     sess = st["sessions"].get(session)
     entry = (sess or {}).get("branches", {}).get(branch)

@@ -14,6 +14,8 @@ Usage: python3 tests/e2e/e2e.py [--seed N] [--count N] [--repo owner/name] [--sc
 """
 import argparse, json, os, random, shutil, subprocess, sys, tempfile, time
 
+os.environ.setdefault("HARNESS_AUTO_ENGAGE", "1")   # the generated scenarios replay the AUTO lanes
+
 SKILLS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SHIP = os.path.join(SKILLS, "plugins/ship-when-done/skills/ship-when-done/scripts/ship.py")
 REVIEW = os.path.join(SKILLS, "plugins/merge-review/skills/merge-review/scripts/review.py")
