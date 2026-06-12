@@ -34,6 +34,17 @@ CANONICAL = [
     {"flow": "single-shot", "gate": "green", "ci": "green"},
     {"flow": "multi-turn", "gate": "green", "ci": "red-then-fixed"},
 ]
+# the EXPLICIT default (HARNESS_AUTO_ENGAGE unset) is a different contract — declaration-driven, no
+# inference — so it gets its own targeted set: every flow against the meaningful gate × ci pairs,
+# plus one auto-detected-gate archetype. Not the full matrix: gate timeout/none and ci slow-green
+# behave identically past the declaration (the hermetic suites pin that); the holes worth a real
+# forge are the declared pipeline itself and the turn-1 inaction.
+EXPLICIT_SET = ([{"flow": f, "gate": g, "ci": c, "mode": "explicit"}
+                 for f in DIMS["flow"]
+                 for g in ("green", "red-then-fixed")
+                 for c in ("green", "red-then-fixed")]
+                + [{"flow": "single-shot", "gate": "auto", "ci": "green", "project": "node",
+                    "mode": "explicit"}])
 CI_PLANS = {"green": {"sleep": 0, "exit": 0}, "red-then-fixed": {"sleep": 0, "exit": 1},
             "slow-green": {"sleep": 60, "exit": 0}}
 
@@ -120,11 +131,15 @@ def baselines(repo, session):
         sh([sys.executable, script, "baseline", "--repo", repo, "--session", session], check=True)
 
 
-def stop(repo, session, transcript, active=False):
+def mode_env(sc):
+    return {"HARNESS_AUTO_ENGAGE": "" if sc.get("mode") == "explicit" else "1"}
+
+
+def stop(repo, session, transcript, active=False, env=None):
     payload = json.dumps({"cwd": repo, "session_id": session, "transcript_path": transcript,
                           "stop_hook_active": active})
     p = subprocess.run([sys.executable, SHIP_HOOK], input=payload, capture_output=True, text=True,
-                       timeout=300, env=dict(os.environ, CLAUDE_PLUGIN_ROOT=SHIP_PLUGIN))
+                       timeout=300, env=dict(os.environ, CLAUDE_PLUGIN_ROOT=SHIP_PLUGIN, **(env or {})))
     return p.stdout.strip()
 
 
@@ -145,6 +160,12 @@ def work(repo, name, ci):
 COVERAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage.json")
 
 
+def harness_rev():
+    """The last commit that changed the harness itself — a proof predates it, the proof is stale."""
+    _, rev, _ = sh(["git", "-C", SKILLS, "log", "-1", "--format=%h", "--", "plugins", "lib"])
+    return rev
+
+
 def coverage_read():
     try:
         return json.load(open(COVERAGE))
@@ -154,25 +175,41 @@ def coverage_read():
 
 def coverage_record(label, runid, secs):
     cov = coverage_read()
-    cov[label] = {"run": runid, "proven": time.strftime("%Y-%m-%d"), "secs": secs}
+    cov[label] = {"run": runid, "proven": time.strftime("%Y-%m-%d"), "secs": secs,
+                  "harness": harness_rev()}
     json.dump(dict(sorted(cov.items())), open(COVERAGE, "w"), indent=2)
+
+
+def scenario_label(sc):
+    if sc.get("twist"):
+        return f"twist/{sc['twist']}"
+    base = f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}"
+    return f"explicit/{base}" if sc.get("mode") == "explicit" else base
 
 
 def coverage_report():
     cov = coverage_read()
+    cur = harness_rev()
     bare = [f"bare/{f}/{g}/{c}" for f in DIMS["flow"] for g in DIMS["gate"] for c in DIMS["ci"]]
     twists = [f"twist/{t}" for t in TWISTS]
     projects = [f"{p}/single-shot/auto/{'red-then-fixed' if p == 'multi' else 'green'}" for p in PROJECTS]
-    print(f"coverage ledger — {len(cov)} situation(s) proven")
-    for space, keys in (("bare", bare), ("projects", projects), ("twists", twists)):
+    explicit = [scenario_label(sc) for sc in EXPLICIT_SET]
+    print(f"coverage ledger — {len(cov)} situation(s) proven · harness @ {cur}")
+    for space, keys in (("bare", bare), ("projects", projects), ("twists", twists),
+                        ("explicit", explicit)):
         missing = [k for k in keys if k not in cov]
-        print(f"  {space}: {len(keys) - len(missing)}/{len(keys)} covered"
-              + (f" — missing: {', '.join(missing)}" if missing else ""))
+        stale = [k for k in keys if k in cov and cov[k].get("harness") != cur]
+        line = f"  {space}: {len(keys) - len(missing)}/{len(keys)} covered"
+        if stale:
+            line += f" · {len(stale)} STALE (proven before harness @ {cur})"
+        if missing:
+            line += f" — missing: {', '.join(missing)}"
+        print(line)
 
 
-def watch_until_resolved(repo, timeout=420):
+def watch_until_resolved(repo, timeout=420, env=None):
     rc, out, err = sh([sys.executable, WATCH, "run", "--repo", repo, "--timeout", str(timeout)],
-                      timeout=timeout + 60)
+                      timeout=timeout + 60, env=env)
     return rc, out + ("\n" + err if err else "")
 
 
@@ -205,11 +242,18 @@ def run_scenario(sc, tag):
     gate_config(workdir, sc["gate"])
     tp = transcript_for(workdir, f"E2E-1 {sc['flow']} delivery on {branch}")
     baselines(workdir, session)
+    menv = mode_env(sc)
 
     if sc["flow"] == "multi-turn":
         work(workdir, "part1", sc["ci"])
-        out = stop(cwd, session, tp)
-        expect("push" in out or "commit" in out, "multi-turn turn1: partial work must commit+push", out)
+        _, n0, _ = sh(["git", "-C", workdir, "rev-list", "--count", "HEAD"])
+        out = stop(cwd, session, tp, env=menv)
+        if sc.get("mode") == "explicit":
+            _, n1, _ = sh(["git", "-C", workdir, "rev-list", "--count", "HEAD"])
+            expect(n1 == n0 and "commit" not in out,
+                   "explicit turn1: no declaration → no action, the work stays untouched", out)
+        else:
+            expect("push" in out or "commit" in out, "multi-turn turn1: partial work must commit+push", out)
         expect(pr_state(branch) is None, "multi-turn turn1: no PR before done", out)
         baselines(workdir, session)
     if sc["flow"] == "reedit":
@@ -220,7 +264,7 @@ def run_scenario(sc, tag):
     sh([sys.executable, SHIP, "mark-done", "--repo", workdir, "--summary",
         f"e2e {sc['flow']}", "--type", "feat"], check=True)
 
-    out = stop(cwd, session, tp)
+    out = stop(cwd, session, tp, env=menv)
     if sc["gate"] == "timeout":
         expect("gate-timeout" in out, "timeout gate: distinct withheld reason expected", out)
         ev = json.load(open(os.path.join(workdir, ".git", "swd-gate.json")))
@@ -240,12 +284,12 @@ def run_scenario(sc, tag):
            "once per work-state — a red gate does not delay it)", out)
     expect(pr_state(branch) is None, "nothing on the forge before the review", out)
     sh([sys.executable, REVIEW, "record", "--repo", workdir, "--score", "95", "--passed"], check=True)
-    out = stop(cwd, session, tp, active=True)
+    out = stop(cwd, session, tp, active=True, env=menv)
     pr = pr_state(branch)
     expect(pr is not None and pr["state"] == "OPEN" and pr["isDraft"],
            "reviewed work must reach the forge as a draft PR", out)
 
-    rc, verdict = watch_until_resolved(workdir)
+    rc, verdict = watch_until_resolved(workdir, env=menv)
     if sc["ci"] == "red-then-fixed":
         expect(rc == 1 and "ROOT" in verdict, "red CI: the watcher must hand back the fix contract",
                verdict)
@@ -253,7 +297,7 @@ def run_scenario(sc, tag):
         sh(["git", "-C", workdir, "add", "-A"], check=True)
         sh(["git", "-C", workdir, "commit", "-qm", "fix: heal the pipeline"], check=True)
         sh(["git", "-C", workdir, "push", "-q", "origin", branch], check=True)
-        rc, verdict = watch_until_resolved(workdir)
+        rc, verdict = watch_until_resolved(workdir, env=menv)
     expect(rc == 0 and "CI green" in verdict, "the pipeline must end green", verdict)
     if sc["gate"] == "auto":
         ev = json.load(open(os.path.join(workdir, ".git", "swd-gate.json")))
@@ -465,15 +509,15 @@ def generate(seed, count):
 
 
 def file_issue(sc, tag, err):
-    what = (f"twist/{sc['twist']}" if sc.get("twist")
-            else f"{sc['flow']}/{sc['gate']}/{sc['ci']}")
+    what = scenario_label(sc)
     title = f"e2e: persistent failure — {what} (seed tag {tag})"
+    repro = ("twist:" + sc["twist"] if sc.get("twist") else
+             ("explicit:" if sc.get("mode") == "explicit" else "")
+             + f"{sc['flow']}:{sc['gate']}:{sc['ci']}" + (f":{sc['project']}" if sc.get("project") else ""))
     body = (f"The E2E lane failed twice on the same generated scenario.\n\n"
             f"**Scenario**: `{json.dumps(sc)}`  ·  **tag**: `{tag}`\n"
-            f"**Reproduce**: `python3 tests/e2e/e2e.py --scenario "
-            + (f"twist:{sc['twist']}" if sc.get("twist") else
-               f"{sc['flow']}:{sc['gate']}:{sc['ci']}" + (f":{sc['project']}" if sc.get("project") else ""))
-            + f"`\n\n```\n{str(err)[-4000:]}\n```")
+            f"**Reproduce**: `python3 tests/e2e/e2e.py --scenario {repro}`"
+            f"\n\n```\n{str(err)[-4000:]}\n```")
     rc, _, _ = sh(["gh", "issue", "create", "--repo", ISSUE_REPO, "--title", title, "--body", body,
                    "--label", "e2e"])
     if rc != 0:
@@ -490,9 +534,12 @@ def main():
                     help="full-integration suite over the project archetypes (auto-detected gates)")
     ap.add_argument("--twists", action="store_true",
                     help="human-divergence situations (dirty start, amend, manual push, review loop…)")
+    ap.add_argument("--explicit", action="store_true",
+                    help="the EXPLICIT-default set: declaration-driven pipeline, turn-1 inaction")
     ap.add_argument("--coverage", action="store_true", help="print the proven-situations ledger")
     ap.add_argument("--fill", action="store_true",
-                    help="run exactly the bare combos the ledger has never proven (target the holes)")
+                    help="run exactly the bare combos the ledger has never proven for the CURRENT "
+                         "harness (a stale proof is a hole)")
     args = ap.parse_args()
     globals()["E2E_REPO"] = args.repo
 
@@ -501,18 +548,24 @@ def main():
         return
     if args.scenario:
         parts = args.scenario.split(":")
+        mode = {}
+        if parts[0] == "explicit":
+            mode, parts = {"mode": "explicit"}, parts[1:]
         if parts[0] == "twist":
             scenarios = [{"twist": parts[1]}]
         else:
             scenarios = [{"flow": parts[0], "gate": parts[1], "ci": parts[2],
-                          **({"project": parts[3]} if len(parts) > 3 else {})}]
+                          **({"project": parts[3]} if len(parts) > 3 else {}), **mode}]
     elif args.fill:
         cov = coverage_read()
+        cur = harness_rev()
         scenarios = [{"flow": f, "gate": g, "ci": c}
                      for f in DIMS["flow"] for g in DIMS["gate"] for c in DIMS["ci"]
-                     if f"bare/{f}/{g}/{c}" not in cov]
+                     if cov.get(f"bare/{f}/{g}/{c}", {}).get("harness") != cur]
     elif args.twists:
         scenarios = [{"twist": t} for t in TWISTS]
+    elif args.explicit:
+        scenarios = list(EXPLICIT_SET)
     elif args.projects:
         scenarios = [{"flow": "single-shot", "gate": "auto",
                       "ci": "red-then-fixed" if p == "multi" else "green", "project": p}
@@ -529,8 +582,7 @@ def main():
         gc_sandbox()
         for i, sc in enumerate(scenarios):
             tag = f"s{args.seed}n{i}r{runid}"
-            label = (f"twist/{sc['twist']}" if sc.get("twist")
-                     else f"{sc.get('project', 'bare')}/{sc['flow']}/{sc['gate']}/{sc['ci']}")
+            label = scenario_label(sc)
             t0 = time.time()
             for attempt in (1, 2):
                 try:
