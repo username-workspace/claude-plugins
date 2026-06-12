@@ -7,7 +7,7 @@
     "Iterative & history-aware: reconciles against the prior pass (stable finding identity, not line numbers) so the score reflects the current code and climbs as feedback is addressed",
     "LOCAL mode auto-fixes the attested findings (high-confidence, cited) at the root cause and loops until viable; contestable logic findings are surfaced, never silently applied",
     "REMOTE mode is read-only: diff injected by the runner, emits verdict + machine-readable state, never commits/pushes/posts",
-    "Self-engaging & session-scoped pre-push gate: reviews the branch THIS session is about to push (never a stale or someone else's); a fake-green guard blocks deleted/weakened tests, --no-verify, || true, lowered thresholds; opt out per repo"
+    "Pre-push gate armed while a declared delivery is in flight (default) or, with HARNESS_AUTO_ENGAGE=1, on the branch THIS session produced work on; a fake-green guard blocks deleted/weakened tests, --no-verify, || true, lowered thresholds; opt out per repo"
   ],
   "commands": [
     "merge-review"

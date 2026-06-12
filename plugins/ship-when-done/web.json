@@ -1,13 +1,13 @@
 {
   "category": "DevOps",
   "tagline": "Commit at each milestone, push so nothing is lost, open the PR when it's actually done.",
-  "summary": "A Stop-hook harness that turns 'did you commit / push / open the MR?' from a thing you keep asking into a thing the agent does — gated on real signals, not self-confidence. Commits coherent milestones, pushes the feature branch (mandatory when a remote exists, anti-loss), and opens a draft PR/MR only when the goal's checklist is satisfied AND the project's quality gate is actually green. Forge-agnostic (GitHub, GitLab, Bitbucket), no CLI required. Branch-first, never on the default branch, never merges. Engages on its own only on work this session produced (never a pre-existing dirty tree); opt out per repo.",
+  "summary": "A Stop-hook harness that turns 'did you commit / push / open the MR?' from a thing you keep asking into a thing the agent does — gated on real signals, not self-confidence. Commits coherent milestones, pushes the feature branch (mandatory when a remote exists, anti-loss), and opens a draft PR/MR only when the goal's checklist is satisfied AND the project's quality gate is actually green. Forge-agnostic (GitHub, GitLab, Bitbucket), no CLI required. Branch-first, never on the default branch, never merges. Explicit by default: a declared done-marker (mark-done) drives it; HARNESS_AUTO_ENGAGE=1 lets it engage on its own on work this session produced (never a pre-existing dirty tree). Opt out per repo.",
   "capabilities": [
     "Autonomy ladder keyed on a completion score: commit → push → draft PR/MR, each on its own trigger",
     "Forge-agnostic PR/MR: uses gh/glab if present, else GitLab push options, else surfaces the PR-creation URL — no CLI dependency",
     "Done is decided from free objective signals (gate actually green, no fresh TODOs) — no per-turn model call",
     "Guardrails: branch-first, never commit/push the default branch, never auto-merge, no AI attribution",
-    "Self-engaging & session-scoped: acts only on work this session produced (never a pre-existing dirty tree), opt out per repo; zero-config (auto-detects the gate, forge, ticket pattern, commit convention)"
+    "Explicit by default (a declared mark-done drives it) or self-engaging with HARNESS_AUTO_ENGAGE=1 (work this session produced, never a pre-existing dirty tree); opt out per repo; zero-config (auto-detects the gate, forge, ticket pattern, commit convention)"
   ],
   "commands": ["ship"],
   "platforms": ["macOS", "Linux"]

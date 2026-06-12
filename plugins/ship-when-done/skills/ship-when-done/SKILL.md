@@ -6,10 +6,11 @@ description: >-
   checklist derived from the initiating goal is satisfied AND the project's quality gate is actually
   green. Forge-agnostic (GitHub, GitLab, Bitbucket): uses gh/glab if present, else GitLab push
   options, else surfaces the PR-creation URL — no CLI dependency. Branch-first; never commits or
-  pushes the default branch; never merges; no AI attribution. Engages on its own only on work THIS
-  session produced (never a pre-existing dirty tree); opt out per repo. Use when you want the agent to
-  commit/push/open-PR on its own instead of being asked each time. Horizontal: any repo with a remote
-  and a detectable gate.
+  pushes the default branch; never merges; no AI attribution. Explicit by default: it acts only on a
+  declared done-marker (mark-done); HARNESS_AUTO_ENGAGE=1 lets it engage on its own on work THIS
+  session produced (never a pre-existing dirty tree); opt out per repo. Use when you want the
+  commit/push/open-PR mechanics handled for you — deterministically by default, autonomously with the
+  env var. Horizontal: any repo with a remote and a detectable gate.
 ---
 
 # ship-when-done
@@ -20,12 +21,18 @@ agent does — gated on **real signals**, not the model's self-confidence.
 ## How it fires
 
 It registers a **`Stop` hook** (end of an agent turn — `hooks/hooks.json` → `hooks/stop-hook.py` →
-`scripts/ship.py engage`). It **engages itself** — no opt-in file, no env var. A companion
-`UserPromptSubmit` hook stamps HEAD + the dirty set at the start of each turn; it acts **only if THIS
-session produced the work** (HEAD advanced or the tree changed since that baseline), so it never
-sweeps up a **pre-existing dirty tree** you didn't touch, or auto-mutates a repo you're just visiting.
-Opt a repo **out** with `{ "enabled": false }` in `.ship-when-done.json`. When engaged, it still acts
-only if there is work in flight (uncommitted changes or unshipped commits).
+`scripts/ship.py engage`). **Two engagement modes:**
+
+- **Explicit (the default)** — fully deterministic: the Stop hook acts **only when a done-marker was
+  declared for the current branch** (`mark-done`, below). No declaration → no action, ever. The
+  companion hooks still *record* (baselines, provenance) but never decide anything.
+- **Auto (`HARNESS_AUTO_ENGAGE=1` in the environment)** — it engages itself: it acts when **THIS
+  session produced the work** (HEAD or tree advanced since the turn-start baseline, or the branch
+  carries paths this session observably edited), so it never sweeps up a pre-existing dirty tree or
+  a repo you're just visiting.
+
+Opt a repo **out** entirely with `{ "enabled": false }` in `.ship-when-done.json`. When engaged, it
+still acts only if there is work in flight (uncommitted changes or unshipped commits).
 
 ## The autonomy ladder
 
@@ -76,7 +83,7 @@ To plug an independent judge, set `judge_command` (your own command) — off by 
 - **No AI attribution** in commit messages.
 - **`wip/` escape hatch** — a branch whose name starts with `skip_marker` is left untouched.
 
-## Configure (optional — it engages on its own)
+## Configure (optional)
 
 No config is required. Drop a `.ship-when-done.json` only to tune it or opt out.
 > 🔒 `gate` and `judge_command` are shell commands run on **every** engaged turn, so they are **never
@@ -89,7 +96,7 @@ fast while CI stays on the full run — e.g. a multi-suite repo:
 `printf '{"gate":"bash scripts/run-tests.sh --impacted"}' > "$(git rev-parse --git-dir)/ship-when-done.json"`.
 ```jsonc
 {
-  "enabled": true,              // set false to opt this repo OUT (engagement is otherwise automatic)
+  "enabled": true,              // set false to opt this repo OUT (either engagement mode)
   "on_done": "draft-pr",        // draft-pr (default) | ready-pr | suggest
   "gate": null,                  // auto-detected (pnpm/bun/yarn/npm scripts, composer test, pytest, go test, cargo test, make test) unless set — .git/ or --config only
   "ticket_pattern": "\\b([A-Z][A-Z0-9]+-\\d+)\\b",

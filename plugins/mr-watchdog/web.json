@@ -7,7 +7,7 @@
     "Background task the SESSION owns: launched via run_in_background, tracked by the harness, which re-invokes you when it resolves — the verdict lands in the conversation, not a status file",
     "Read-only watcher — it only polls CI and reads logs; never commits, pushes, or merges",
     "On red: hands back the failing job log so your session fixes the ROOT cause (no bypass); on green: 'ok, all good'",
-    "verify: a fake-green gate your session runs before committing — blocks deleted/weakened tests, --no-verify, || true, lowered thresholds. Self-engaging & session-scoped (only a branch THIS session pushed); opt out per repo; forge-agnostic (gh/glab)"
+    "verify: a fake-green gate your session runs before committing — blocks deleted/weakened tests, --no-verify, || true, lowered thresholds. Engaged via ship-when-done's handoff (default) or self-engaging with HARNESS_AUTO_ENGAGE=1 (a branch THIS session pushed); opt out per repo; forge-agnostic (gh/glab)"
   ],
   "commands": ["watch"],
   "platforms": ["macOS", "Linux"]

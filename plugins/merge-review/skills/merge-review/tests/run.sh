@@ -7,6 +7,7 @@ RV="$HERE/../scripts/review.py"
 PY="$(command -v python3)"
 ROOT="$(mktemp -d)"; PASS=0; FAIL=0
 . "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
+export HARNESS_AUTO_ENGAGE=1   # this suite pins the AUTO lanes; the explicit default is pinned in its own block
 
 # hermetic PATH for `context` (so which(gh/glab) is false → no network)
 mkdir -p "$ROOT/realbin"

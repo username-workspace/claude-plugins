@@ -9,6 +9,7 @@ HOOK="$PLUGIN/hooks/stop-hook.py"
 SHIP="$PLUGIN/skills/ship-when-done/scripts/ship.py"
 ROOT="$(mktemp -d)"; GH_LOG="$ROOT/gh.log"; : > "$GH_LOG"; PASS=0; FAIL=0
 . "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/tests/lib.sh"
+export HARNESS_AUTO_ENGAGE=1   # this suite pins the AUTO lanes; the explicit default is pinned in its own block
 
 mkdir -p "$ROOT/bin"
 cat > "$ROOT/bin/gh" <<EOF
